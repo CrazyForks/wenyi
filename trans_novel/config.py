@@ -40,6 +40,9 @@ class PipelineConfig(BaseModel):
     backtranslate_sample: float = 0.05
     consistency_qa: bool = True
     rolling_context_segments: int = 6
+    # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译 prompt（让译者对全书有理解）。
+    # 廉价档，且全局概览为恒定前缀可命中缓存复用；关掉可省去预扫成本。
+    book_understanding: bool = True
 
 
 class Config(BaseModel):

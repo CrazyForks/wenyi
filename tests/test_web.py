@@ -171,6 +171,47 @@ class TestWebApi(unittest.TestCase):
             self.assertNotIn("旧译", seg)
             self.assertEqual(seg, "新译与新译同行。")
 
+    def test_runs_list_and_stop_noop(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt, cfgpath = self._prepare(d)
+            client = TestClient(create_app(config_path=cfgpath))
+            runs = client.get("/api/runs").json()["runs"]
+            mine = [r for r in runs if r["input"] == os.path.abspath(txt)]
+            self.assertEqual(len(mine), 1)
+            r = mine[0]
+            self.assertEqual(r["status"], "done")
+            self.assertEqual(r["total"], 2)
+            self.assertEqual(r["done"], 2)
+            self.assertFalse(r["running"])
+            self.assertTrue(r["source_exists"])
+            # 没有正在跑的任务 → 停止是 no-op
+            stop = client.post("/api/stop", json={"input": txt}).json()
+            self.assertFalse(stop["stopping"])
+
+    def test_upload_persists_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt"); write_sample_txt(txt)
+            cfgd = _cfg_dict(os.path.join(d, "state"))
+            cfgpath = os.path.join(d, "cfg.yaml")
+            with open(cfgpath, "w", encoding="utf-8") as f:
+                yaml.safe_dump(cfgd, f)
+            client = TestClient(create_app(config_path=cfgpath))
+            with open(txt, "rb") as f:
+                data = f.read()
+            r = client.post("/api/upload", params={"name": "book.txt"},
+                            content=data).json()
+            self.assertTrue(os.path.isfile(r["input"]))
+            self.assertTrue(r["input"].endswith("book.txt"))
+            with open(r["input"], "rb") as f:
+                self.assertEqual(f.read(), data)
+
+    def test_ws_idle_when_no_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt, cfgpath = self._prepare(d)
+            with TestClient(create_app(config_path=cfgpath)) as client:
+                with client.websocket_connect("/ws/does-not-exist") as ws:
+                    self.assertEqual(ws.receive_json()["type"], "idle")
+
     def test_run_and_ws(self):
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt"); write_sample_txt(txt)

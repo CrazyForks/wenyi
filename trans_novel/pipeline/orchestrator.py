@@ -4,7 +4,8 @@
   每批：渲染上下文（含前一批刚译出的译文）→ 检索术语 → 翻译（对齐保证）→
         廉价校验(空译) + 审校 → 严重项逐段重译 → 润色 → 标点规范化 →
         立即把本批译文并入滚动上下文（供下一批参照，保证连贯）。
-  章末（串行）：回译抽检 → 术语抽取入库 → 写 TM → 更新故事梗概 → 落盘标记 done。
+  章末（串行）：回译抽检 → 术语抽取入库 → 写 TM → 落盘标记 done。
+翻译前先预扫源文建立全书理解（逐章梗概+全书概览），作恒定前缀注入每章翻译。
 
 run_all：在翻译全书后接 术语 AI 审计统一 → 一致性 QA → 写报告 → 回填出 EPUB，一气呵成。
 进度回调 progress(done_segments, total_segments, label) 与 UI 无关，每批完成即触发。
@@ -24,6 +25,7 @@ from ..llm.base import LLMClient, build_client
 from ..ingest.segmenter import load_document, batch_segments
 from ..postprocess.punct import normalize_zh
 from ..agents.analyzer import Analyzer
+from ..agents.synopsis import Synopsizer
 from ..agents.translator import Translator
 from ..agents.reviewer import Reviewer, BackTranslator
 from ..agents.polisher import Polisher
@@ -33,6 +35,11 @@ from .runstore import RunStore, slugify, STATUS_DONE
 
 ProgressFn = Callable[[int, int, str], None]
 EventFn = Callable[[dict], None]
+StopFn = Callable[[], bool]
+
+
+class RunCancelled(Exception):
+    """协作式停止：在批/章边界收到停止信号时抛出（已译部分均已落盘，可续跑）。"""
 
 
 def _emit(events: Optional[EventFn], ev: dict) -> None:
@@ -77,6 +84,7 @@ class Orchestrator:
         self.config = config
         self.client = client or build_client(config)
         self.analyzer = Analyzer(self.client, config)
+        self.synopsizer = Synopsizer(self.client, config)
         self.translator = Translator(self.client, config)
         self.reviewer = Reviewer(self.client, config)
         self.backtrans = BackTranslator(self.client, config)
@@ -88,7 +96,7 @@ class Orchestrator:
         """把解析出的源语言应用到 config 与各 agent（auto 检测后调用）。"""
         resolved = lang or self.config.source_lang
         self.config.source_lang = resolved
-        for ag in (self.analyzer, self.translator, self.reviewer,
+        for ag in (self.analyzer, self.synopsizer, self.translator, self.reviewer,
                    self.backtrans, self.polisher, self.extractor):
             ag.src = resolved
 
@@ -149,13 +157,16 @@ class Orchestrator:
 
     def run(self, input_path: str, *, only_chapter: int | None = None,
             progress: Optional[ProgressFn] = None,
-            events: Optional[EventFn] = None) -> RunStore:
+            events: Optional[EventFn] = None,
+            should_stop: Optional[StopFn] = None) -> RunStore:
         store = self.prepare(input_path)
         manifest = store.load_manifest()
         self._apply_language(manifest.get("source_lang") or self.config.source_lang)
         glossary = GlossaryStore(store.glossary_path)
         context = RollingContext.from_dict(store.load_context() or {})
         style = self.analyzer.style_brief(store.load_analysis() or {})
+        # 翻译前预扫源文，建立全书理解（幂等、可续跑）；全书概览注入每章翻译
+        book_synopsis = self._build_understanding(store, events=events)
 
         if only_chapter is not None:
             targets = [only_chapter]
@@ -168,9 +179,12 @@ class Orchestrator:
                        "total_segments": total, "chapters": len(targets)})
         try:
             for ci in targets:
+                if should_stop and should_stop():
+                    raise RunCancelled()
                 done = self._translate_chapter(
-                    ci, store, glossary, context, style,
-                    progress=progress, events=events, done=done, total=total)
+                    ci, store, glossary, context, style, book_synopsis,
+                    progress=progress, events=events, done=done, total=total,
+                    should_stop=should_stop)
                 store.save_context(context.to_dict())
                 _emit(events, {"type": "chapter_done", "chapter": ci})
             # 全书译完后翻译书名与各章标题（供目录/文件名使用，借术语表保持专名一致）
@@ -189,6 +203,43 @@ class Orchestrator:
         for ci in chapter_indices:
             total += len(store.load_chapter(ci).text_segments)
         return total
+
+    # ── 全书理解预扫（源文逐章梗概 + 全书概览）────────────────────────────────
+    def _build_understanding(self, store: RunStore, *,
+                             events: Optional[EventFn] = None) -> str:
+        """翻译前预扫源文：逐章梗概存入 chapter.meta，归并出全书概览存入 analysis。
+
+        幂等、可续跑：已有梗概/概览则跳过。返回全书概览（注入各章翻译 prompt）。
+        关闭 book_understanding 时直接返回空串。
+        """
+        if not self.config.pipeline.book_understanding:
+            return ""
+        manifest = store.load_manifest()
+        chapters = manifest.get("chapters", [])
+        _emit(events, {"type": "step", "step": "understand", "status": "start",
+                       "chapters": len(chapters)})
+
+        digests: list[str] = []
+        for i, c in enumerate(chapters):
+            ci = c.get("index", i)
+            ch = store.load_chapter(ci)
+            digest = ch.meta.get("source_digest")
+            if not digest:
+                src = "\n".join(s.source for s in ch.text_segments)
+                digest = self.synopsizer.digest_chapter(src)
+                ch.meta["source_digest"] = digest
+                store.save_chapter(ch)  # 增量落盘：续跑不重复
+            digests.append(digest or "")
+
+        analysis = store.load_analysis() or {}
+        synopsis = analysis.get("book_synopsis", "")
+        if not synopsis and any(d.strip() for d in digests):
+            synopsis = self.synopsizer.book_synopsis(
+                digests, self.analyzer.style_brief(analysis))
+            analysis["book_synopsis"] = synopsis
+            store.save_analysis(analysis)
+        _emit(events, {"type": "step", "step": "understand", "status": "done"})
+        return synopsis
 
     # ── 书名 / 章节标题翻译（目录与输出文件名用）──────────────────────────────
     def _translate_titles(self, store: RunStore, glossary: GlossaryStore, *,
@@ -239,14 +290,17 @@ class Orchestrator:
     # ── 单章 ──────────────────────────────────────────────────────────────
     def _translate_chapter(self, ci: int, store: RunStore,
                            glossary: GlossaryStore, context: RollingContext,
-                           style: str, *, progress: Optional[ProgressFn] = None,
+                           style: str, book_synopsis: str = "", *,
+                           progress: Optional[ProgressFn] = None,
                            events: Optional[EventFn] = None,
-                           done: int = 0, total: int = 0) -> int:
+                           done: int = 0, total: int = 0,
+                           should_stop: Optional[StopFn] = None) -> int:
         chapter = store.load_chapter(ci)
         text_segs = chapter.text_segments
         if not text_segs:
             store.set_chapter_status(ci, STATUS_DONE)
             return done
+        chapter_digest = chapter.meta.get("source_digest", "")
 
         batches = batch_segments(text_segs, self.config.segment.max_chars_per_batch)
         label = f"第{ci}章 {chapter.title}"
@@ -275,9 +329,16 @@ class Orchestrator:
                 })
                 continue
 
+            # 协作式停止：在批边界检查（已译批均已落盘）→ 抛出由上层捕获，可续跑
+            if should_stop and should_stop():
+                chapter.meta["review_issues"] = review_issues
+                store.save_chapter(chapter)
+                raise RunCancelled()
+
             ctx_text = context.render(self.config.pipeline.rolling_context_segments)
             # 传整章全量术语表（不按批裁剪）：批次间 glossary 块恒定，命中前缀缓存
-            res = self._process_batch(b, term_snapshot, ctx_text, style)
+            res = self._process_batch(b, term_snapshot, ctx_text, style,
+                                      book_synopsis, chapter_digest)
             for s, t in zip(b, res.targets):
                 s.target = t
             context.add_targets(res.targets)
@@ -319,9 +380,6 @@ class Orchestrator:
             if s.target:
                 glossary.add_tm(s.source, s.target, ci)
 
-        # 更新故事梗概（跨章串行传递）
-        context.update_summary(self.client, tgt_text)
-
         chapter.meta["review_issues"] = review_issues
         chapter.meta["backtranslation_issues"] = bt_issues
         store.save_chapter(chapter)
@@ -334,15 +392,17 @@ class Orchestrator:
         "too_long": "译文明显偏长（疑似增译/失控）",
     }
 
-    def _process_batch(self, batch, terms, ctx_text: str, style: str) -> _BatchResult:
+    def _process_batch(self, batch, terms, ctx_text: str, style: str,
+                       book_synopsis: str = "", chapter_digest: str = "") -> _BatchResult:
         """单个批次：整批翻译 → 审校/长度校验（仅上报）→ 标点规范化。
 
         每段都在自身上下文里翻译，不跨位置复用译文（避免丢失语境信息）。
-        问题一律 fixed=False，交人工介入。
+        全书概览/本章梗概作为恒定前缀注入，让译者把握全局。问题一律 fixed=False，交人工介入。
         """
         sources = [s.source for s in batch]
         targets = self.translator.translate_batch(
-            sources, glossary_terms=terms, style=style, context=ctx_text)
+            sources, glossary_terms=terms, style=style, context=ctx_text,
+            book_synopsis=book_synopsis, chapter_digest=chapter_digest)
 
         issues: list[dict] = []
         if self.config.pipeline.review:
@@ -380,8 +440,12 @@ class Orchestrator:
     def run_steps(self, input_path: str, steps, *,
                   progress: Optional[ProgressFn] = None,
                   events: Optional[EventFn] = None,
-                  out_format: str = "epub", out_path: str | None = None) -> dict[str, Any]:
-        """按需执行步骤子集（可单选可全选）。steps ⊆ ALL_STEPS。"""
+                  out_format: str = "epub", out_path: str | None = None,
+                  should_stop: Optional[StopFn] = None) -> dict[str, Any]:
+        """按需执行步骤子集（可单选可全选）。steps ⊆ ALL_STEPS。
+
+        翻译阶段支持协作式停止（should_stop）：停在批边界抛 RunCancelled，由调用方捕获。
+        """
         from ..agents.glossary_auditor import GlossaryAuditor
         from ..agents.consistency import ConsistencyChecker
         from ..assemble.writer import assemble
@@ -390,7 +454,8 @@ class Orchestrator:
         steps = set(steps)
 
         if "translate" in steps:
-            store = self.run(input_path, progress=progress, events=events)
+            store = self.run(input_path, progress=progress, events=events,
+                             should_stop=should_stop)
         else:
             store = self.prepare(input_path)
             m = store.load_manifest()

@@ -32,6 +32,8 @@ class Translator:
         glossary_terms: list[GlossaryTerm],
         style: str,
         context: str,
+        book_synopsis: str = "",
+        chapter_digest: str = "",
     ) -> list[str]:
         n = len(sources)
         system = prompts.render(
@@ -41,8 +43,10 @@ class Translator:
         )
         user = prompts.render(
             "translator_user", src=self.src, tgt=self.tgt,
-            glossary=prompts.render_glossary(glossary_terms),
             style=style or "（无）",
+            book_synopsis=book_synopsis or "（无）",
+            glossary=prompts.render_glossary(glossary_terms),
+            chapter_digest=chapter_digest or "（无）",
             context=context or "（无）",
             n=n, n_minus_1=n - 1,
             numbered_source=prompts.numbered(sources),
@@ -57,8 +61,10 @@ class Translator:
             raise AlignmentError("模型未返回译文数组")
         return [str(x) for x in items]
 
-    def _translate_one(self, source: str, glossary_terms, style, context) -> str:
-        out = self._call_batch([source], glossary_terms, style, context)
+    def _translate_one(self, source, glossary_terms, style, context,
+                       book_synopsis, chapter_digest) -> str:
+        out = self._call_batch([source], glossary_terms, style, context,
+                               book_synopsis, chapter_digest)
         return out[0] if out else ""
 
     def translate_batch(
@@ -68,6 +74,8 @@ class Translator:
         glossary_terms: list[GlossaryTerm] | None = None,
         style: str = "",
         context: str = "",
+        book_synopsis: str = "",
+        chapter_digest: str = "",
     ) -> list[str]:
         """翻译一批源段，返回与之等长的译文列表。"""
         glossary_terms = glossary_terms or []
@@ -78,10 +86,12 @@ class Translator:
         attempts = self.config.pipeline.review_retry_limit + 1
         for _ in range(attempts):
             try:
-                out = self._call_batch(sources, glossary_terms, style, context)
+                out = self._call_batch(sources, glossary_terms, style, context,
+                                       book_synopsis, chapter_digest)
             except Exception:
                 out = []
             if len(out) == n:
                 return out
         # 兜底：逐段翻译，保证 1:1
-        return [self._translate_one(s, glossary_terms, style, context) for s in sources]
+        return [self._translate_one(s, glossary_terms, style, context,
+                                    book_synopsis, chapter_digest) for s in sources]

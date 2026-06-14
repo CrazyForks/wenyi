@@ -1,9 +1,9 @@
 """命令行入口（typer + rich）。
 
-主命令 translate = 连续全流程：分析 → 翻译（章内串行、逐批刷新上下文、段级进度）→
-术语 AI 审计统一 → 一致性 QA → 报告 → 回填出 EPUB，一气呵成；中断后再次运行自动断点续跑。
-
-其余子命令供细粒度使用：resume / status / glossary / assemble / qa / report。
+日常只需两个命令：
+- `web`：启动可视化控制台（**推荐**，浏览器内选/上传书籍、运行、暂停/续跑、看双语流与术语表）；
+- `translate`：连续全流程（分析→翻译→术语审计→一致性 QA→报告→回填 EPUB），中断后再次运行自动续跑。
+其余 `resume` / `status` 为常用辅助；细粒度/调试工具收敛到 `tools`：glossary / assemble / qa / report。
 """
 
 from __future__ import annotations
@@ -28,6 +28,8 @@ from .ingest.segmenter import load_document
 from .pipeline.runstore import RunStore, slugify, STATUS_DONE
 
 app = typer.Typer(add_completion=False, help="多 Agent 小说翻译系统（日/英 → 中）")
+tools_app = typer.Typer(add_completion=False,
+                        help="高级/调试工具：glossary（术语表）/ assemble（回填）/ qa / report")
 console = Console()
 
 _CONFIG = {"path": "config.yaml"}
@@ -128,7 +130,7 @@ def status(input: str = typer.Argument(..., help="输入文件")):
     g.close()
 
 
-@app.command()
+@tools_app.command()
 def glossary(
     input: str = typer.Argument(..., help="输入文件"),
     action: str = typer.Argument("list", help="list | conflicts | audit | lock | resolve"),
@@ -179,7 +181,7 @@ def glossary(
         g.close()
 
 
-@app.command()
+@tools_app.command()
 def assemble(input: str = typer.Argument(..., help="输入文件"),
              out: Optional[str] = typer.Option(None, "--out"),
              fmt: str = typer.Option("epub", "--format", help="epub | txt")):
@@ -195,7 +197,7 @@ def assemble(input: str = typer.Argument(..., help="输入文件"),
     console.print(f"已生成译文：[bold]{path}[/]")
 
 
-@app.command()
+@tools_app.command()
 def qa(input: str = typer.Argument(..., help="输入文件")):
     """全书跨章一致性扫描。"""
     from .agents.consistency import ConsistencyChecker
@@ -215,7 +217,7 @@ def qa(input: str = typer.Argument(..., help="输入文件")):
         console.print(f"  [{it.get('type')}] {it.get('detail')}  ({it.get('where', '')})")
 
 
-@app.command()
+@tools_app.command()
 def report(input: str = typer.Argument(..., help="输入文件")):
     """生成 QA 报告（漏译/冲突/低置信度汇总）。"""
     from .assemble.report import build_report
@@ -239,20 +241,25 @@ def report(input: str = typer.Argument(..., help="输入文件")):
 
 @app.command()
 def web(
-    input: Optional[str] = typer.Argument(None, help="可选：预填的输入文件路径"),
+    input: Optional[str] = typer.Argument(None, help="可选：预填的输入文件路径（一般无需，浏览器内选/上传即可）"),
     host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(8000, "--port"),
 ):
-    """启动可视化 Web 前端（翻译过程实时双语对照、术语表编辑、建议/修订）。"""
+    """启动可视化控制台：浏览器内选/上传书籍、运行、暂停/续跑、实时双语流与术语表编辑。
+
+    直接 `uv run trans-novel web` 即可，无需在命令行指定文件。
+    """
     import uvicorn
 
     from .web.server import create_app
 
     application = create_app(config_path=_CONFIG["path"], default_input=input)
-    console.print(f"[bold green]Web 前端已启动[/]：http://{host}:{port}")
-    if input:
-        console.print(f"已预填输入：{input}")
+    console.print(f"[bold green]Web 控制台已启动[/]：http://{host}:{port}")
+    console.print("在页面里选择/上传书籍即可开始（命令行无需指定文件）。")
     uvicorn.run(application, host=host, port=port, log_level="info")
+
+
+app.add_typer(tools_app, name="tools")
 
 
 def main() -> None:

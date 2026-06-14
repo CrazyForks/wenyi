@@ -1,10 +1,14 @@
 """可选 Web 前端的 FastAPI 后端。
 
 复用核心流水线与落盘状态，不改变 CLI 行为：
+- 持久 run 列表：GET /api/runs 扫 state_dir 列出所有书+进度+状态（关浏览器/重启可见）；
+- 上传：POST /api/upload?name= 原始字节直传（浏览器手动选文件，命令行无需指定）；
 - 读态 REST：state / glossary / chapter / report / revisions；
 - 术语写：编辑 / 删除 / 裁决冲突 / 应用到正文；
-- 运行：POST /api/run 在后台线程跑 Orchestrator.run_steps（步骤可选/全选）；
-- WebSocket /ws/{run_id}：把 orchestrator 的事件（含批次级双语对照、建议、进度）实时推给前端。
+- 运行：POST /api/run 在后台线程跑 Orchestrator.run_steps（步骤可选/全选），run_id = run-dir slug；
+- 暂停：POST /api/stop 协作式停在批边界（已落盘，再次运行即续跑）；
+- WebSocket /ws/{slug}：实时推送批次级双语对照/建议/进度；无活动任务回 idle，前端改用 REST 读盘。
+  任务为后台线程，关浏览器不影响其继续；重连=REST 读盘 + WS 接增量。
 """
 
 from __future__ import annotations
@@ -12,10 +16,9 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
-import uuid
 from typing import Any, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -25,8 +28,8 @@ from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..glossary import resolver
 from ..agents.glossary_auditor import GlossaryAuditor
 from ..ingest.segmenter import load_document
-from ..pipeline.orchestrator import Orchestrator
-from ..pipeline.runstore import RunStore, slugify
+from ..pipeline.orchestrator import Orchestrator, RunCancelled
+from ..pipeline.runstore import RunStore, slugify, STATUS_DONE
 
 _STATIC = os.path.join(os.path.dirname(__file__), "static")
 
@@ -34,13 +37,36 @@ _STATIC = os.path.join(os.path.dirname(__file__), "static")
 _RUN_DIR_CACHE: dict[str, str] = {}
 
 
+def _scan_run_dir(config: Config, abs_input: str) -> Optional[str]:
+    """在 state_dir 各 run 目录里按 manifest.source_path 反查 run_dir（避免重解析整本书）。"""
+    root = config.state_dir
+    if not os.path.isdir(root):
+        return None
+    for name in os.listdir(root):
+        d = os.path.join(root, name)
+        mf = os.path.join(d, "manifest.json")
+        if not os.path.isfile(mf):
+            continue
+        try:
+            m = RunStore._read_json(mf)
+        except Exception:
+            continue
+        sp = m.get("source_path", "")
+        if sp and os.path.abspath(sp) == abs_input:
+            return d
+    return None
+
+
 def _run_dir(config: Config, input_path: str) -> str:
     key = os.path.abspath(input_path)
     cached = _RUN_DIR_CACHE.get(key)
     if cached:
         return cached
-    doc = load_document(input_path, config.source_lang, config.target_lang)
-    run_dir = os.path.join(config.state_dir, slugify(doc.title))
+    # 先按已有 manifest 反查（快）；查不到再解析文档取标题作 slug（新书首次）
+    run_dir = _scan_run_dir(config, key)
+    if run_dir is None:
+        doc = load_document(input_path, config.source_lang, config.target_lang)
+        run_dir = os.path.join(config.state_dir, slugify(doc.title))
     _RUN_DIR_CACHE[key] = run_dir
     return run_dir
 
@@ -50,22 +76,40 @@ def _store(config: Config, input_path: str) -> RunStore:
 
 
 # ── 运行管理：后台线程 + 事件队列桥接到 asyncio ──────────────────────────────
+# 以 run-dir 的 slug 为持久 run_id：关闭/重连浏览器都按 slug 找回正在跑的任务；
+# 任务是后台线程，关浏览器不影响其继续；进度内容均落盘，重连用 REST 读盘 + WS 接增量。
 class _Run:
     def __init__(self) -> None:
         # 有界队列：WS 正常会立刻消费；万一没有消费者也不会无限堆积内存
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=4096)
         self.done = False
+        self.cancel = threading.Event()      # 协作式停止信号
+        self.steps: list[str] = []
 
 
 class RunManager:
     def __init__(self) -> None:
-        self.runs: dict[str, _Run] = {}
+        self.runs: dict[str, _Run] = {}      # slug -> _Run（仅含正在运行的任务）
+
+    def is_running(self, slug: str) -> bool:
+        return slug in self.runs
+
+    def stop(self, slug: str) -> bool:
+        run = self.runs.get(slug)
+        if run is None:
+            return False
+        run.cancel.set()
+        return True
 
     def start(self, loop: asyncio.AbstractEventLoop, config: Config,
-              input_path: str, steps, out_format: str, out_path: Optional[str]) -> str:
-        run_id = uuid.uuid4().hex[:12]
+              run_dir: str, input_path: str, steps, out_format: str,
+              out_path: Optional[str]) -> Optional[str]:
+        slug = os.path.basename(run_dir.rstrip("/"))
+        if slug in self.runs:
+            return None  # 该书已有任务在跑，不重复启动
         run = _Run()
-        self.runs[run_id] = run
+        run.steps = list(steps)
+        self.runs[slug] = run
 
         def _put(ev: dict) -> None:
             try:
@@ -83,14 +127,19 @@ class RunManager:
             try:
                 Orchestrator(config).run_steps(
                     input_path, steps, events=emit,
-                    out_format=out_format, out_path=out_path)
+                    out_format=out_format, out_path=out_path,
+                    should_stop=run.cancel.is_set)
+            except RunCancelled:
+                emit({"type": "paused"})
             except Exception as e:  # 把异常也推给前端
                 emit({"type": "error", "detail": str(e)})
             finally:
+                run.done = True
                 emit({"type": "_end"})
+                self.runs.pop(slug, None)     # 任务结束才移除（WS 断开不移除）
 
         threading.Thread(target=worker, daemon=True).start()
-        return run_id
+        return slug
 
 
 # ── 请求体 ──────────────────────────────────────────────────────────────────
@@ -160,6 +209,63 @@ def create_app(config_path: str = "config.yaml",
     @app.get("/api/config")
     def get_config():
         return {"default_input": default_input, "steps": list(Orchestrator.ALL_STEPS)}
+
+    # ── 持久 run 列表（扫 state_dir，关浏览器/重启服务后都能看到并续跑）────────────
+    @app.get("/api/runs")
+    def runs():
+        config = cfg()
+        root = config.state_dir
+        out: list[dict] = []
+        if os.path.isdir(root):
+            for name in sorted(os.listdir(root)):
+                mf = os.path.join(root, name, "manifest.json")
+                if not os.path.isfile(mf):
+                    continue
+                try:
+                    m = RunStore._read_json(mf)
+                except Exception:
+                    continue
+                chs = m.get("chapters", [])
+                total = len(chs)
+                done = sum(1 for c in chs if c.get("status") == STATUS_DONE)
+                running = manager.is_running(name)
+                if running:
+                    status = "running"
+                elif total and done == total:
+                    status = "done"
+                elif done > 0:
+                    status = "partial"
+                else:
+                    status = "pending"
+                sp = m.get("source_path", "")
+                out.append({
+                    "slug": name,
+                    "title": m.get("title", ""),
+                    "title_translated": m.get("title_translated", ""),
+                    "input": sp,
+                    "source_exists": bool(sp) and os.path.isfile(sp),
+                    "fmt": m.get("fmt", ""),
+                    "source_lang": m.get("source_lang", ""),
+                    "total": total, "done": done, "status": status,
+                    "running": running,
+                    "steps": manager.runs[name].steps if running else [],
+                })
+        return {"runs": out}
+
+    # ── 上传书籍（浏览器手动选文件；原始字节直传，存到 state_dir/_uploads）─────────
+    @app.post("/api/upload")
+    async def upload(request: Request, name: str):
+        config = cfg()
+        data = await request.body()
+        if not data:
+            return JSONResponse({"error": "empty body"}, status_code=400)
+        safe = os.path.basename(name) or "upload.bin"
+        updir = os.path.join(config.state_dir, "_uploads")
+        os.makedirs(updir, exist_ok=True)
+        path = os.path.join(updir, safe)
+        with open(path, "wb") as f:
+            f.write(data)
+        return {"input": os.path.abspath(path), "name": safe}
 
     # ── 读态 ────────────────────────────────────────────────────────────────
     @app.get("/api/state")
@@ -393,29 +499,42 @@ def create_app(config_path: str = "config.yaml",
         steps = [s for s in req.steps if s in Orchestrator.ALL_STEPS]
         if not steps:
             return JSONResponse({"error": "no valid steps"}, status_code=400)
-        run_id = manager.start(loop, cfg(), req.input, steps, req.format, req.out)
+        if not os.path.isfile(req.input):
+            return JSONResponse({"error": "input not found"}, status_code=400)
+        config = cfg()
+        run_dir = _run_dir(config, req.input)
+        run_id = manager.start(loop, config, run_dir, req.input, steps,
+                               req.format, req.out)
+        if run_id is None:
+            return JSONResponse({"error": "already running"}, status_code=409)
         return {"run_id": run_id, "steps": steps}
+
+    @app.post("/api/stop")
+    def stop(req: InputReq):
+        """协作式暂停：在批边界优雅停下（已译部分已落盘，再次运行即续跑）。"""
+        run_dir = _run_dir(cfg(), req.input)
+        slug = os.path.basename(run_dir.rstrip("/"))
+        return {"stopping": manager.stop(slug), "slug": slug}
 
     @app.websocket("/ws/{run_id}")
     async def ws(websocket: WebSocket, run_id: str):
+        # run_id = run-dir 的 slug。无活动任务 → 告知 idle（前端改用 REST 读盘）。
         await websocket.accept()
         run = manager.runs.get(run_id)
         if run is None:
-            await websocket.send_json({"type": "error", "detail": "unknown run_id"})
+            await websocket.send_json({"type": "idle"})
             await websocket.close()
             return
         try:
             while True:
                 ev = await run.queue.get()
                 if ev.get("type") == "_end":
-                    run.done = True
                     await websocket.send_json({"type": "end"})
                     break
                 await websocket.send_json(ev)
         except WebSocketDisconnect:
             pass
-        finally:
-            manager.runs.pop(run_id, None)
+        # 不在此移除 run：关浏览器后任务仍在跑，留待 worker 结束时清理，支持重连
 
     app.mount("/static", StaticFiles(directory=_STATIC), name="static")
     return app

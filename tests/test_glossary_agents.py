@@ -73,27 +73,17 @@ class TestExtractor(unittest.TestCase):
 
 class TestRollingContext(unittest.TestCase):
     def test_render_and_bound(self):
-        ctx = RollingContext(summary="梗概文本", max_recent_keep=3)
+        ctx = RollingContext(max_recent_keep=3)
         ctx.add_targets(["a", "b", "c", "d", "e"])
         self.assertEqual(ctx.recent_targets, ["c", "d", "e"])  # 限长
-        rendered = ctx.render(n_recent=2)
-        self.assertIn("梗概文本", rendered)
+        rendered = ctx.render(n_recent=2)  # 只取最近两段
         self.assertIn("d", rendered)
         self.assertIn("e", rendered)
-        self.assertNotIn("[0]", rendered)
-
-    def test_update_summary(self):
-        client = FakeClient(handler=lambda m, t, j: "更新后的梗概")
-        ctx = RollingContext(summary="旧梗概")
-        ctx.update_summary(client, "新章节译文")
-        self.assertEqual(ctx.summary, "更新后的梗概")
-        # 调用走的是 cheap 档
-        self.assertEqual(client.calls[-1]["tier"], "cheap")
+        self.assertNotIn("c", rendered)
 
     def test_roundtrip(self):
-        ctx = RollingContext(summary="s", recent_targets=["x", "y"])
+        ctx = RollingContext(recent_targets=["x", "y"])
         ctx2 = RollingContext.from_dict(ctx.to_dict())
-        self.assertEqual(ctx2.summary, "s")
         self.assertEqual(ctx2.recent_targets, ["x", "y"])
 
 

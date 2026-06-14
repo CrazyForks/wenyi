@@ -10,7 +10,7 @@ import unittest
 
 from trans_novel.config import Config
 from trans_novel.llm.base import FakeClient
-from trans_novel.pipeline.orchestrator import Orchestrator, _normalize_lang
+from trans_novel.pipeline.orchestrator import Orchestrator, RunCancelled, _normalize_lang
 from trans_novel.pipeline.runstore import RunStore, slugify, STATUS_DONE, STATUS_PENDING
 from tests.sample_data import write_sample_txt
 from tests.fake_llm import routing_handler
@@ -137,6 +137,105 @@ class TestSegmentLevelResume(unittest.TestCase):
             # 之前已译的段仍是 R1（未被跨位置复用、也未重翻），补译段是 R2
             self.assertTrue(ch2.text_segments[0].target.startswith("R1"))
             self.assertTrue(ch2.text_segments[-1].target.startswith("R2"))
+
+
+class TestBookUnderstanding(unittest.TestCase):
+    def _translate_user(self, calls) -> str:
+        """返回最后一次翻译调用送进模型的 user 文本。"""
+        for c in reversed(calls):
+            if "文学翻译" in c["messages"][0]["content"]:
+                return c["messages"][-1]["content"]
+        return ""
+
+    def test_prepass_builds_and_injects(self):
+        """预扫产出逐章梗概+全书概览，并注入翻译 prompt。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+
+            client = FakeClient(handler=routing_handler)
+            store = Orchestrator(cfg, client=client).run(txt)
+
+            # 逐章梗概落盘到 chapter.meta
+            self.assertTrue(store.load_chapter(0).meta.get("source_digest"))
+            # 全书概览落盘到 analysis
+            self.assertTrue((store.load_analysis() or {}).get("book_synopsis"))
+
+            # 翻译 prompt 注入了全书概览 / 本章梗概块（且非「（无）」占位）
+            user = self._translate_user(client.calls)
+            self.assertIn("【全书概览】", user)
+            self.assertIn("【本章梗概】", user)
+            self.assertIn("全书概览", user)   # fake 概览正文
+            self.assertIn("本章梗概", user)   # fake 逐章梗概正文
+
+    def test_resume_skips_prepass(self):
+        """续跑：梗概/概览已落盘，不再产生预扫调用。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            Orchestrator(cfg, client=FakeClient(handler=routing_handler)).run(txt)
+
+            c2 = FakeClient(handler=routing_handler)
+            Orchestrator(cfg, client=c2).run(txt)
+            prepass = [c for c in c2.calls
+                       if "梗概员" in c["messages"][0]["content"]
+                       or "概览员" in c["messages"][0]["content"]]
+            self.assertEqual(len(prepass), 0)
+
+    def test_toggle_off(self):
+        """关闭 book_understanding：不预扫，prompt 用「（无）」占位。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            cfg.pipeline.book_understanding = False
+
+            client = FakeClient(handler=routing_handler)
+            store = Orchestrator(cfg, client=client).run(txt)
+
+            self.assertFalse(store.load_chapter(0).meta.get("source_digest"))
+            self.assertFalse((store.load_analysis() or {}).get("book_synopsis"))
+            prepass = [c for c in client.calls
+                       if "梗概员" in c["messages"][0]["content"]
+                       or "概览员" in c["messages"][0]["content"]]
+            self.assertEqual(len(prepass), 0)
+
+
+class TestCooperativeStop(unittest.TestCase):
+    def test_stop_pauses_at_batch_boundary_then_resumes(self):
+        """should_stop 在批边界优雅停下：已译批落盘、章仍 pending；再次运行续跑完成。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            cfg.segment.max_chars_per_batch = 8   # 每段≈独立批
+            cfg.pipeline.book_understanding = False
+
+            calls = {"n": 0}
+            def stop() -> bool:
+                calls["n"] += 1
+                return calls["n"] > 2   # 放过章首+1 批，之后停
+
+            with self.assertRaises(RunCancelled):
+                Orchestrator(cfg, client=FakeClient(handler=routing_handler)).run(
+                    txt, only_chapter=0, should_stop=stop)
+
+            from trans_novel.ingest.segmenter import load_document
+            doc = load_document(txt, "ja", "zh")
+            store = RunStore(os.path.join(d, "state", slugify(doc.title)))
+            ch = store.load_chapter(0)
+            targets = [s.target for s in ch.text_segments]
+            self.assertTrue(any(t for t in targets))        # 有已译批
+            self.assertTrue(any(not t for t in targets))    # 也有未译批
+            self.assertNotEqual(store.load_manifest()["chapters"][0]["status"],
+                                STATUS_DONE)
+
+            # 续跑（不再停）→ 全部完成
+            Orchestrator(cfg, client=FakeClient(handler=routing_handler)).run(txt)
+            self.assertTrue(all(c["status"] == STATUS_DONE
+                                for c in store.load_manifest()["chapters"]))
 
 
 class TestLangNormalize(unittest.TestCase):

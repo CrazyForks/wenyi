@@ -39,6 +39,8 @@ pipeline:
   backtranslate_sample: 0.05  # 回译抽检比例（0 关闭）
   consistency_qa: true      # 全书跨章一致性收尾扫描
   rolling_context_segments: 6 # 注入的前文译文尾段数
+  book_understanding: true  # 翻译前预扫源文，生成全书概览+逐章梗概注入翻译（让译者对全书有理解）；
+                            # 廉价档，全书概览为恒定前缀可命中缓存复用；关掉省去预扫成本
 
 # ── 敬称策略（日语源专用，英语源忽略）────────────────────────────────────
 honorific:

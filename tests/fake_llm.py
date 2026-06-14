@@ -51,7 +51,10 @@ def routing_handler(messages, tier, json_mode):
     if "保真度" in system:
         return json.dumps({"issues": []}, ensure_ascii=False)
 
-    if "情节摘要员" in system:
-        return "故事梗概更新。"
+    if "章节梗概员" in system:
+        return "本章梗概：人物登场，情节推进。"
+
+    if "全书概览员" in system:
+        return "全书概览：主线与人物关系，整体基调。"
 
     return "{}" if json_mode else ""
