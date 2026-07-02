@@ -368,9 +368,10 @@ class Orchestrator:
         bt_samples: list[tuple[str, str]] = []
         seg_base = 0   # 当前批首段的章内段号（issue 批内下标 → 章内段号）
         for b in batches:
-            if all(s.target and s.target.strip() for s in b):
+            existing_targets = [s.target for s in b if s.target and s.target.strip()]
+            if len(existing_targets) == len(b):
                 # 该批上次已在原位、原上下文中译完 → 复用，重建滚动上下文后跳过
-                context.add_targets([s.target for s in b])
+                context.add_targets(existing_targets)
                 store.log_event(
                     "batch_skipped",
                     chapter=ci,

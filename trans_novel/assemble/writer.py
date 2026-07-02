@@ -86,7 +86,7 @@ def _render_chapter_html(chapter: Chapter) -> str:
             cur_anchor = s.anchor
             by_anchor[cur_anchor] = _seg_text(s)
     for anchor, text in by_anchor.items():
-        el = soup.find(attrs={"data-tn-id": anchor})
+        el = soup.find(True, attrs={"data-tn-id": anchor})
         if el is None:
             continue
         el.clear()
@@ -98,6 +98,10 @@ def _render_chapter_html(chapter: Chapter) -> str:
 def _base_no_frag(href: str) -> str:
     """取 href 的文件名（去目录、去 #锚点），用于跨文件相对路径匹配。"""
     return os.path.basename((href or "").split("#", 1)[0])
+
+
+def _attr_str(value: object) -> str:
+    return value if isinstance(value, str) else ""
 
 
 def _rewrite_opf_title(data: bytes, book_title: str) -> bytes:
@@ -126,7 +130,7 @@ def _rewrite_toc(data: bytes, title_by_base: dict[str, str], *, is_ncx: bool) ->
                 label = np.find("text")
                 if content is None or label is None:
                     continue
-                t = title_by_base.get(_base_no_frag(content.get("src", "")))
+                t = title_by_base.get(_base_no_frag(_attr_str(content.get("src"))))
                 if t:
                     label.clear()
                     label.append(t)
@@ -134,11 +138,12 @@ def _rewrite_toc(data: bytes, title_by_base: dict[str, str], *, is_ncx: bool) ->
         # EPUB3 nav.xhtml：只改 epub:type="toc" 的导航，避免误改 landmarks / page-list
         soup = BeautifulSoup(data, "html.parser")
         toc_navs = [n for n in soup.find_all("nav")
-                    if "toc" in (n.get("epub:type", "") or n.get("type", "")).split()]
+                    if "toc" in (_attr_str(n.get("epub:type"))
+                                 or _attr_str(n.get("type"))).split()]
         scopes = toc_navs or [soup]  # 找不到带类型的 toc nav 时退回全局
         for scope in scopes:
             for a in scope.find_all("a", href=True):
-                t = title_by_base.get(_base_no_frag(a["href"]))
+                t = title_by_base.get(_base_no_frag(_attr_str(a.get("href"))))
                 if t:
                     a.clear()
                     a.append(t)
@@ -225,7 +230,7 @@ def _build_epub_from_chapters(store: RunStore, out_path: str) -> str:
         spine.append(item)
         toc.append(item)
 
-    book.toc = tuple(toc)
+    book.toc = toc
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
     book.spine = spine

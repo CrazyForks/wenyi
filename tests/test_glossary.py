@@ -26,6 +26,7 @@ class TestGlossary(unittest.TestCase):
         )
         self.assertEqual(r, "inserted")
         t = self.store.get_term("綾小路")
+        assert t is not None
         self.assertEqual(t.target, "绫小路")
         self.assertEqual(t.gender, "男")
 
@@ -47,7 +48,9 @@ class TestGlossary(unittest.TestCase):
             GlossaryTerm(source="堀北", target="掘北", confidence="medium"), chapter=1
         )
         self.assertEqual(r, "conflict")
-        self.assertEqual(self.store.get_term("堀北").target, "堀北")
+        term = self.store.get_term("堀北")
+        assert term is not None
+        self.assertEqual(term.target, "堀北")
         self.assertEqual(len(self.store.open_conflicts()), 1)
 
     def test_conflict_overrides_low_confidence(self):
@@ -58,7 +61,9 @@ class TestGlossary(unittest.TestCase):
             GlossaryTerm(source="X", target="新译", confidence="high"), chapter=1
         )
         self.assertEqual(r, "updated")
-        self.assertEqual(self.store.get_term("X").target, "新译")
+        term = self.store.get_term("X")
+        assert term is not None
+        self.assertEqual(term.target, "新译")
 
     def test_translation_memory(self):
         self.store.add_tm("風が強かった。", "风很大。", chapter=1)

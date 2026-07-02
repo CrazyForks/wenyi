@@ -214,9 +214,19 @@ def glossary(
                     f"（替换 {', '.join(u['variants']) or '—'}）"
                 )
         elif action == "lock":
+            if arg1 is None:
+                console.print("[red]lock 需要提供原文术语。[/]")
+                raise typer.Exit(1)
             resolver.lock(g, arg1)
-            console.print(f"已锁定 {arg1} → {g.get_term(arg1).target}")
+            term = g.get_term(arg1)
+            if term is None:
+                console.print(f"[red]术语不存在：{arg1}[/]")
+                raise typer.Exit(1)
+            console.print(f"已锁定 {arg1} → {term.target}")
         elif action == "resolve":
+            if arg1 is None or arg2 is None:
+                console.print("[red]resolve 需要提供原文术语和目标译名。[/]")
+                raise typer.Exit(1)
             resolver.resolve(g, arg1, arg2)
             console.print(f"已裁定并锁定 {arg1} → {arg2}")
         else:
