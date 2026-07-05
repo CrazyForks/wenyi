@@ -1,8 +1,8 @@
 """编排器：驱动全流程，章级状态机 + 断点续跑。
 
 单章流水线（章内批次**串行**，逐批刷新滚动上下文；跨章亦串行传递梗概）：
-  每批：渲染上下文（含前一批刚译出的译文）→ 翻译（对齐保证）→ 长度校验（零成本）→
-        润色（可选）→ 标点规范化 → 立即把本批译文并入滚动上下文（供下一批参照，保证连贯）。
+  每批：渲染上下文（含前一批刚译出的译文）→ 翻译（对齐保证）→ 润色（可选）→
+        标点规范化 → 立即把本批译文并入滚动上下文（供下一批参照，保证连贯）。
   章末（串行）：整章分块审校（不阻塞翻译主路径）→ 严重项定向重译（autofix_severe，
         过长度校验才采纳）→ 回译抽检 → 术语抽取入库 → 写 TM → 落盘标记 done。
 翻译前先预扫源文建立全书理解（逐章梗概+全书概览，fast 档并行），作恒定前缀注入每章翻译。
@@ -384,7 +384,10 @@ class Orchestrator:
         # 逐批串行：每批渲染最新上下文 → 处理 → 立即把译文并入上下文供下一批参照。
         # 不再并发，换取章内跨批的代词/术语/语气连贯。
         # 断点续跑（段/批级）：上次中断前已译完并落盘的批次，整批跳过、不重翻，只重建上下文。
-        review_issues: list[dict] = list(chapter.meta.get("review_issues", []))
+        review_issues: list[dict] = [
+            i for i in chapter.meta.get("review_issues", [])
+            if i.get("stage") != "length"
+        ]
         bt_samples: list[tuple[str, str]] = []
         seg_base = 0   # 当前批首段的章内段号（issue 批内下标 → 章内段号）
         for b in batches:
@@ -444,9 +447,9 @@ class Orchestrator:
             store.save_chapter(chapter)
 
         # ── 章末整章审校（移出批内关键路径；块内 index 映射回章内段号）──
-        # 幂等：续跑重入章末时清掉旧审校项（只留批内长度校验项），防重复累积
+        # 幂等：续跑重入章末时清掉旧审校项，防重复累积。
         if self.config.pipeline.review:
-            review_issues = [i for i in review_issues if i.get("stage") == "length"]
+            review_issues = []
             new_issues = self._review_chapter(text_segs, term_snapshot)
             store.log_event(
                 "chapter_reviewed",
@@ -504,12 +507,6 @@ class Orchestrator:
             backtranslation_issue_count=len(bt_issues),
         )
         return done
-
-    _LEN_DETAIL = {
-        "empty": "译文为空（疑似漏译）",
-        "too_short": "译文明显偏短（疑似漏译）",
-        "too_long": "译文明显偏长（疑似增译/失控）",
-    }
 
     # ── 章末审校 + 严重项定向重译 ────────────────────────────────────────────
     _SEVERE_TYPES = ("missing", "mistranslation")
@@ -607,7 +604,7 @@ class Orchestrator:
 
     def _process_batch(self, batch, terms, ctx_text: str, style: str,
                        book_synopsis: str = "", chapter_digest: str = "") -> _BatchResult:
-        """单个批次：整批翻译 → 长度校验（零成本，仅上报）→ 润色 → 标点规范化。
+        """单个批次：整批翻译 → 润色 → 标点规范化。
 
         每段都在自身上下文里翻译，不跨位置复用译文（避免丢失语境信息）。
         全书概览/本章梗概作为恒定前缀注入，让译者把握全局。
@@ -618,14 +615,7 @@ class Orchestrator:
             sources, glossary_terms=terms, style=style, context=ctx_text,
             book_synopsis=book_synopsis, chapter_digest=chapter_digest)
 
-        # 无成本长度校验：空译/过短/过长作为待人工项上报（index 为批内下标，调用方映射）
         issues: list[dict] = []
-        for f in checks.length_flags(sources, targets):
-            issues.append({
-                "index": f.index, "type": f.reason,
-                "detail": self._LEN_DETAIL.get(f.reason, f.reason),
-                "suggestion": "", "stage": "length", "fixed": False,
-            })
 
         if self.config.pipeline.polish:
             polished = self.polisher.polish(targets, glossary_terms=terms, style=style)
