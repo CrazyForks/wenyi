@@ -118,7 +118,14 @@ def _translate_impl(
         task = prog.add_task("准备中…", total=None)
 
         def cb(done: int, total: int, label: str) -> None:
-            prog.update(task, completed=done, total=total or None, description=label)
+            nonlocal task
+            if total > 0:
+                prog.update(task, completed=done, total=total, description=label)
+                return
+            # Rich 的 update(total=None) 表示“不修改 total”，无法从上一阶段的
+            # 确定总数切回滚动模式；重建任务以清除残留的章节/段落计数。
+            prog.remove_task(task)
+            task = prog.add_task(label, total=None)
 
         if chapter is not None:
             store = orch.run(input_path, only_chapter=chapter, progress=cb)
