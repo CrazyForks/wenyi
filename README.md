@@ -6,7 +6,7 @@
 
 ## 快速开始
 
-需要 Python 3.12+ 与 [uv](https://docs.astral.sh/uv/)。
+需要 Python 3.10+ 与 [uv](https://docs.astral.sh/uv/)。
 
 ```bash
 uv sync

@@ -2,7 +2,7 @@
 
 ## 安装与运行
 
-从源码运行需要 Python 3.12+ 与 [uv](https://docs.astral.sh/uv/)。
+从源码运行需要 Python 3.10+ 与 [uv](https://docs.astral.sh/uv/)。
 
 ```bash
 uv sync
