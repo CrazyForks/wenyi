@@ -8,6 +8,8 @@ import tempfile
 import unittest
 import zipfile
 
+from bs4 import BeautifulSoup
+
 from trans_novel.config import Config
 from trans_novel.llm.base import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
@@ -88,6 +90,21 @@ class TestAssembleText(unittest.TestCase):
                 content = f.read()
             self.assertIn("润0", content)  # 译文已写入
 
+    def test_pipeline_passes_about_page_config_to_writer(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            cfg.output.about_page = False
+            orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
+
+            result = orch.run_all(txt, out_format="epub")
+
+            with zipfile.ZipFile(result["output"]) as z:
+                self.assertFalse(
+                    any(name.endswith("trans-novel-about.xhtml") for name in z.namelist())
+                )
+
     def test_txt_input_to_epub(self):
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
@@ -98,6 +115,12 @@ class TestAssembleText(unittest.TestCase):
             self.assertEqual(os.path.basename(out), "novel.zh.epub")
             self.assertEqual(os.path.dirname(out), os.path.join(d, "output"))
             self.assertTrue(zipfile.is_zipfile(out))
+            with zipfile.ZipFile(out) as z:
+                names = z.namelist()
+                about_name = next(
+                    name for name in names if name.endswith("trans-novel-about.xhtml")
+                )
+                self.assertIn("关于此翻译", z.read(about_name).decode("utf-8"))
             # 重新解析生成的 EPUB，应能读出章节且含译文
             doc = load_document(out, "ja", "zh")
             self.assertGreaterEqual(len(doc.chapters), 2)
@@ -115,9 +138,33 @@ class TestAssembleEpub(unittest.TestCase):
             self.assertTrue(zipfile.is_zipfile(out))
             with zipfile.ZipFile(out) as z:
                 html = z.read("OEBPS/ch1.xhtml").decode("utf-8")
+                about = z.read("OEBPS/trans-novel-about.xhtml").decode("utf-8")
+                opf = BeautifulSoup(z.read("OEBPS/content.opf"), "xml")
             self.assertIn("润0", html)            # 译文已替换
             self.assertNotIn("data-tn-id", html)  # 占位标记已清除
             self.assertNotIn("綾小路は教室", html)  # 原文已被替换
+            self.assertIn("关于此翻译", about)
+            about_item = opf.find("item", href="trans-novel-about.xhtml")
+            self.assertIsNotNone(about_item)
+            assert about_item is not None
+            spine = opf.find("spine")
+            self.assertIsNotNone(spine)
+            assert spine is not None
+            spine_items = spine.find_all("itemref")
+            self.assertEqual(spine_items[-1].get("idref"), about_item.get("id"))
+
+    def test_about_page_can_be_disabled_for_template_epub(self):
+        with tempfile.TemporaryDirectory() as d:
+            ep = os.path.join(d, "novel.epub")
+            write_sample_epub(ep)
+            store, _ = _run(ep, os.path.join(d, "state"))
+
+            out = assemble(store, ep, out_format="epub", about_page=False)
+
+            with zipfile.ZipFile(out) as z:
+                self.assertFalse(
+                    any(name.endswith("trans-novel-about.xhtml") for name in z.namelist())
+                )
 
     def test_vertical_epub_is_exported_as_horizontal_chinese(self):
         with tempfile.TemporaryDirectory() as d:

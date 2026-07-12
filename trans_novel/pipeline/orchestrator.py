@@ -806,6 +806,7 @@ class Orchestrator:
                         out_path=out_path,
                         out_format=out_format,
                         bilingual=False,
+                        about_page=out_cfg.about_page,
                     )
                 )
             if do_bilingual:
@@ -818,6 +819,7 @@ class Orchestrator:
                         out_format=out_format,
                         bilingual=True,
                         order=out_cfg.bilingual_order,
+                        about_page=out_cfg.about_page,
                     )
                 )
             store.log_event("assembled", outputs=outputs, out_format=out_format)

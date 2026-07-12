@@ -63,11 +63,13 @@ output:
   mono: true
   bilingual: false
   bilingual_order: target_first
+  about_page: true
 ```
 
 - `mono`：生成单语中文版，文件名为 `<书名>.zh.epub`。
 - `bilingual`：生成原文与译文对照版，文件名为 `<书名>.zh-bi.epub`。
 - `bilingual_order`：`target_first` 表示译文在上，`source_first` 表示原文在上。
+- `about_page`：在书籍末尾附加“关于此翻译”项目说明页；设为 `false` 可关闭。
 
 默认只生成单语版；使用 `--bilingual` 可同时生成双语版，配置和命令行也可组合为仅生成双语版。
 
