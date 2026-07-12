@@ -341,7 +341,14 @@ def assemble(
     paths: list[str] = []
     if do_mono:
         paths.append(
-            do_assemble(store, input, out_path=out, out_format=fmt, bilingual=False)
+            do_assemble(
+                store,
+                input,
+                out_path=out,
+                out_format=fmt,
+                bilingual=False,
+                about_page=config.output.about_page,
+            )
         )
     if do_bilingual:
         bi_out = bilingual_out_path(out) if out else None
@@ -353,6 +360,7 @@ def assemble(
                 out_format=fmt,
                 bilingual=True,
                 order=config.output.bilingual_order,
+                about_page=config.output.about_page,
             )
         )
     for path in paths:

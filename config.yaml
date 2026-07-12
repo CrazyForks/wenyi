@@ -68,3 +68,4 @@ output:
   mono: true            # 产出单语中文版
   bilingual: false      # 产出双语版（原文淡化，与译文对照）
   bilingual_order: target_first  # target_first=译文在上原文在下; source_first=原文在上
+  about_page: true      # 在书末附加“关于此翻译”说明页

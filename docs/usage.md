@@ -37,6 +37,7 @@ setx DEEPSEEK_API_KEY "sk-..."
 - `--format txt`：输出纯文本；TXT 输入默认仍生成 EPUB。
 - EPUB 输入会尽量按原 XHTML 模板回填译文，保留样式、图片、目录和锚点。
 - 双语版按段展示译文与淡化原文，排列顺序由 `output.bilingual_order` 控制。
+- EPUB 默认在书末附加“关于此翻译”说明，可通过 `output.about_page: false` 关闭。
 - 状态文件位于 `state/`，包含章节中间结果、术语 SQLite 库和报告。
 
 ## 常用命令

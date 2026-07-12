@@ -16,11 +16,15 @@ from bs4 import BeautifulSoup
 
 from ..ingest.models import KIND_HEADING, Chapter
 from ..pipeline.runstore import RunStore
+from .about import append_about_page
 
 _ILLEGAL_FN = re.compile(r'[\\/:*?"<>|\r\n\t]+')
 _HTML_EXTS = (".xhtml", ".html", ".htm")
 _VERTICAL_MARKERS = (
-    re.compile(rb"(?:-epub-|-webkit-)?writing-mode\s*:\s*(?:vertical-rl|vertical-lr|tb-rl)", re.I),
+    re.compile(
+        rb"(?:-epub-|-webkit-)?writing-mode\s*:\s*(?:vertical-rl|vertical-lr|tb-rl)",
+        re.I,
+    ),
     re.compile(rb"page-progression-direction\s*=\s*['\"]rtl['\"]", re.I),
     re.compile(rb"\bclass\s*=\s*['\"][^'\"]*\bvrtl\b", re.I),
 )
@@ -296,7 +300,7 @@ def _rewrite_html_document(
                 "direction: ltr !important; "
                 "text-orientation: mixed !important; "
                 "} "
-                ".vrtl, .vertical, [class*=\"vrtl\"] { "
+                '.vrtl, .vertical, [class*="vrtl"] { '
                 "writing-mode: horizontal-tb !important; "
                 "-epub-writing-mode: horizontal-tb !important; "
                 "-webkit-writing-mode: horizontal-tb !important; "
@@ -335,9 +339,12 @@ def _rewrite_toc(data: bytes, title_by_base: dict[str, str], *, is_ncx: bool) ->
             return soup.encode()
         # EPUB3 nav.xhtml：只改 epub:type="toc" 的导航，避免误改 landmarks / page-list
         soup = BeautifulSoup(data, "html.parser")
-        toc_navs = [n for n in soup.find_all("nav")
-                    if "toc" in (_attr_str(n.get("epub:type"))
-                                 or _attr_str(n.get("type"))).split()]
+        toc_navs = [
+            n
+            for n in soup.find_all("nav")
+            if "toc"
+            in (_attr_str(n.get("epub:type")) or _attr_str(n.get("type"))).split()
+        ]
         scopes = toc_navs or [soup]  # 找不到带类型的 toc nav 时退回全局
         for scope in scopes:
             for a in scope.find_all("a", href=True):
@@ -544,6 +551,7 @@ def assemble(
     *,
     bilingual: bool = False,
     order: str = "target_first",
+    about_page: bool = True,
 ) -> str:
     """生成译文文件（默认 EPUB）。
 
@@ -552,6 +560,7 @@ def assemble(
       - 原文是纯文本 → 生成一个规范的 EPUB（标题 h1 + 段落 p）。
     out_format="txt"：无论原文格式，按章重建为纯文本。
     bilingual=True 时额外输出原文（淡背景块），order 控制译文/原文先后。
+    about_page=True 时在书末附加“关于此翻译”说明页。
     """
     m = store.load_manifest()
     if out_format == "txt":
@@ -560,8 +569,14 @@ def assemble(
     # epub
     out_path = out_path or _default_out(source_path, "epub", "", bilingual=bilingual)
     if m["fmt"] == "epub":
-        return _assemble_epub(
+        result = _assemble_epub(
             store, source_path, out_path, bilingual=bilingual, order=order
         )
-    # fb2 / text → 从章节数据生成规范 EPUB
-    return _build_epub_from_chapters(store, out_path, bilingual=bilingual, order=order)
+    else:
+        # fb2 / text → 从章节数据生成规范 EPUB
+        result = _build_epub_from_chapters(
+            store, out_path, bilingual=bilingual, order=order
+        )
+    if about_page:
+        append_about_page(result, _epub_lang(m.get("target_lang", "zh")))
+    return result

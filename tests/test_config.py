@@ -24,6 +24,7 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertTrue(cfg.output.mono)
             self.assertFalse(cfg.output.bilingual)
             self.assertEqual(cfg.output.bilingual_order, "target_first")
+            self.assertTrue(cfg.output.about_page)
             self.assertFalse(cfg.pipeline.autofix_severe)
             self.assertTrue(cfg.pipeline.polish)
             self.assertEqual(cfg.pipeline.backtranslate_sample, 0.0)
@@ -53,6 +54,11 @@ class TestConfigFileCreation(unittest.TestCase):
         self.assertEqual(cfg.pipeline.backtranslate_sample, 0.0)
         self.assertFalse(cfg.pipeline.consistency_qa)
         self.assertEqual(cfg.pipeline.review_concurrency, 4)
+
+    def test_about_page_can_be_disabled(self):
+        cfg = Config.from_dict({"output": {"about_page": False}})
+
+        self.assertFalse(cfg.output.about_page)
 
 
 if __name__ == "__main__":
