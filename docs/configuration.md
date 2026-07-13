@@ -17,15 +17,47 @@ language:
 ```yaml
 llm:
   provider: deepseek
+```
+
+只需选择模型提供商。DeepSeek provider 默认使用：
+
+- `https://api.deepseek.com`；
+- `DEEPSEEK_API_KEY` 环境变量；
+- `deepseek-v4-pro` 作为 strong 档；
+- `deepseek-v4-flash` 作为 cheap 和 fast 档。
+
+API Key 始终从环境变量读取，避免把密钥写进配置并提交到仓库。离线测试或调试可将 `provider` 改为 `fake`，此时不会发网络请求。
+
+需要代理、自定义环境变量或覆盖模型时，可添加高级配置：
+
+```yaml
+llm:
+  provider: deepseek
   base_url: https://api.deepseek.com
   api_key_env: DEEPSEEK_API_KEY
   timeout: 600
   max_retries: 4
+  tiers:
+    strong:
+      model: deepseek-v4-pro
+      options:
+        reasoning_effort: high
+        thinking: true
+    cheap:
+      model: deepseek-v4-flash
+      options:
+        reasoning_effort: high
+        thinking: true
+    fast:
+      model: deepseek-v4-flash
+      options:
+        thinking: false
 ```
 
-API Key 从 `api_key_env` 指定的环境变量读取，避免把密钥写进配置并提交到仓库。`tiers` 下的 `strong`、`cheap`、`fast` 分别用于高质量翻译、审校判断和较机械的任务；缺少某档时按 `fast -> cheap -> strong` 回退。
-
-离线测试或调试可将 `llm.provider` 改为 `fake`，此时不会发网络请求。
+用户配置的档位会覆盖 provider 中对应的默认档位，未配置的档位继续使用默认值。
+运行时若请求了仍不存在的档位，则按 `fast -> cheap -> strong` 回退。
+`options` 由所选 provider 自行解释和校验；上述 `thinking`、`reasoning_effort`
+只属于 DeepSeek，不会进入通用 LLM 抽象层。
 
 ## 流水线
 

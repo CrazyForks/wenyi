@@ -168,6 +168,15 @@ def _print_usage(report: dict) -> None:
             f"  · {tier}：{v['total_tokens']:,} tok，{v['calls']} 次调用，"
             f"缓存命中率 {v['cache_hit_rate']:.1%}"
         )
+    for stage, v in sorted(
+        (usage.get("by_stage") or {}).items(),
+        key=lambda item: -item[1]["total_tokens"],
+    ):
+        console.print(
+            f"  · 阶段 {stage}：{v['total_tokens']:,} tok"
+            f"（提示 {v['prompt_tokens']:,} / 生成 {v['completion_tokens']:,}），"
+            f"{v['calls']} 次调用，缓存命中率 {v['cache_hit_rate']:.1%}"
+        )
 
 
 # ── translate / resume：连续全流程 ──────────────────────────────────────────
@@ -372,7 +381,7 @@ def qa(input: str = typer.Argument(..., help="输入文件")):
     """全书跨章一致性扫描。"""
     from .agents.consistency import ConsistencyChecker
     from .glossary.store import GlossaryStore
-    from .llm.base import build_client
+    from .llm.factory import build_client
 
     config = _load_config()
     store = _runstore_for(config, input)

@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from trans_novel.config import Config
-from trans_novel.llm.base import FakeClient
+from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.glossary.store import GlossaryStore
 from trans_novel.glossary.extractor import GlossaryExtractor
 from trans_novel.agents.analyzer import Analyzer

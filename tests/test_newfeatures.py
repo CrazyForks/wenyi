@@ -10,7 +10,7 @@ import zipfile
 
 from trans_novel.config import Config
 from trans_novel.postprocess.punct import normalize_zh
-from trans_novel.llm.base import FakeClient
+from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
 from tests.sample_data import write_sample_txt
 from tests.fake_llm import routing_handler

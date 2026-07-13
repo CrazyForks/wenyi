@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 
 from trans_novel.cli import app
 from trans_novel.config import Config
-from trans_novel.llm.base import FakeClient
+from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.assemble.writer import (
     _default_out,

@@ -11,7 +11,7 @@ import zipfile
 from bs4 import BeautifulSoup
 
 from trans_novel.config import Config
-from trans_novel.llm.base import FakeClient
+from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
 from trans_novel.assemble.writer import assemble
 from trans_novel.assemble.report import build_report

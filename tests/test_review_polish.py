@@ -8,7 +8,7 @@ import unittest
 
 from trans_novel.config import Config
 from trans_novel.ingest.models import Segment
-from trans_novel.llm.base import FakeClient
+from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.agents.reviewer import Reviewer, BackTranslator
 from trans_novel.agents.polisher import Polisher
 from trans_novel.pipeline.orchestrator import Orchestrator
