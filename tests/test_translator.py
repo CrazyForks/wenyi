@@ -8,7 +8,7 @@ import unittest
 
 from trans_novel.config import Config
 from trans_novel.agents import prompts
-from trans_novel.llm.base import FakeClient
+from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.agents.translator import Translator
 from trans_novel.pipeline.checks import count_aligned, length_flags
 

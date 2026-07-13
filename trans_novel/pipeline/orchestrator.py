@@ -22,12 +22,9 @@ from typing import Any, Callable, Optional
 from ..config import Config
 from ..glossary.extractor import GlossaryExtractor
 from ..glossary.store import GlossaryStore, TYPE_PERSON
-from ..llm.base import (
-    LLMClient,
-    build_client,
-    merge_usage_summaries,
-    usage_delta,
-)
+from ..llm.base import LLMClient
+from ..llm.factory import build_client
+from ..llm.usage import merge_usage_summaries, usage_delta
 from ..ingest.segmenter import load_document, batch_segments
 from ..postprocess.punct import normalize_zh
 from ..agents.analyzer import Analyzer

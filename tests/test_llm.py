@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from trans_novel.llm.base import FakeClient, parse_json_loose
+from trans_novel.llm.json_parser import parse_json_loose
+from trans_novel.llm.providers.fake import FakeClient
 
 
 class TestParseJsonLoose(unittest.TestCase):
@@ -26,11 +27,11 @@ class TestParseJsonLoose(unittest.TestCase):
 class TestResolveTier(unittest.TestCase):
     def test_fallback_chain(self):
         from trans_novel.config import TierConfig
-        from trans_novel.llm.base import resolve_tier
+        from trans_novel.llm.tiers import resolve_tier
 
         strong = TierConfig(model="pro")
         cheap = TierConfig(model="flash")
-        fast = TierConfig(model="flash", thinking=False)
+        fast = TierConfig(model="flash", options={"thinking": False})
 
         # 三档全有 → 各归各
         tiers = {"strong": strong, "cheap": cheap, "fast": fast}

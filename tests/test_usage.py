@@ -12,9 +12,14 @@ from unittest.mock import patch
 
 from trans_novel.agents.base import Agent
 from trans_novel.config import Config, LLMConfig, TierConfig
-from trans_novel.llm.base import (
+from trans_novel.llm.factory import build_client
+from trans_novel.llm.providers.deepseek import (
+    DEFAULT_API_KEY_ENV,
+    DEFAULT_BASE_URL,
     DeepSeekClient,
-    FakeClient,
+)
+from trans_novel.llm.providers.fake import FakeClient
+from trans_novel.llm.usage import (
     UsageTracker,
     merge_usage_summaries,
     usage_delta,
@@ -88,6 +93,65 @@ def _minimal_deepseek_cfg() -> LLMConfig:
             "cheap": TierConfig(model="m2"),
         },
     )
+
+
+class TestDeepSeekProviderDefaults(unittest.TestCase):
+    def test_provider_only_config_uses_deepseek_defaults(self):
+        client = build_client(Config.from_dict({"llm": {"provider": "deepseek"}}))
+        self.assertIsInstance(client, DeepSeekClient)
+        assert isinstance(client, DeepSeekClient)
+
+        self.assertEqual(client.base_url, DEFAULT_BASE_URL)
+        self.assertEqual(client.api_key_env, DEFAULT_API_KEY_ENV)
+        self.assertEqual(client.tiers["strong"].model, "deepseek-v4-pro")
+        self.assertEqual(client.tiers["cheap"].model, "deepseek-v4-flash")
+        self.assertTrue(client.tiers["strong"].options.thinking)
+        self.assertFalse(client.tiers["fast"].options.thinking)
+
+    def test_explicit_config_overrides_provider_defaults(self):
+        client = DeepSeekClient(_minimal_deepseek_cfg())
+
+        self.assertEqual(client.base_url, "x")
+        self.assertEqual(client.api_key_env, "X")
+        self.assertEqual(client.tiers["strong"].model, "m1")
+
+    def test_partial_tier_override_keeps_other_provider_defaults(self):
+        client = DeepSeekClient(
+            LLMConfig(
+                tiers={
+                    "fast": TierConfig(
+                        model="custom-fast",
+                        options={"thinking": False},
+                    ),
+                }
+            )
+        )
+
+        self.assertEqual(client.tiers["fast"].model, "custom-fast")
+        self.assertEqual(client.tiers["strong"].model, "deepseek-v4-pro")
+        self.assertEqual(client.tiers["cheap"].model, "deepseek-v4-flash")
+
+    def test_provider_option_can_be_overridden_without_repeating_model(self):
+        client = DeepSeekClient(
+            LLMConfig(
+                tiers={
+                    "fast": TierConfig(options={"thinking": True}),
+                }
+            )
+        )
+
+        self.assertEqual(client.tiers["fast"].model, "deepseek-v4-flash")
+        self.assertTrue(client.tiers["fast"].options.thinking)
+
+    def test_unknown_provider_option_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "unknown_option"):
+            DeepSeekClient(
+                LLMConfig(
+                    tiers={
+                        "strong": TierConfig(options={"unknown_option": True}),
+                    }
+                )
+            )
 
 
 class TestDeepSeekUsageByTier(unittest.TestCase):

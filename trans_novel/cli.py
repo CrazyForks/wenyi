@@ -381,7 +381,7 @@ def qa(input: str = typer.Argument(..., help="输入文件")):
     """全书跨章一致性扫描。"""
     from .agents.consistency import ConsistencyChecker
     from .glossary.store import GlossaryStore
-    from .llm.base import build_client
+    from .llm.factory import build_client
 
     config = _load_config()
     store = _runstore_for(config, input)

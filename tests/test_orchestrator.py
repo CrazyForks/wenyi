@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 from trans_novel.config import Config
-from trans_novel.llm.base import FakeClient
+from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator, _normalize_lang
 from trans_novel.pipeline.runstore import STATUS_DONE, STATUS_PENDING
 from tests.sample_data import write_sample_txt
@@ -369,7 +369,7 @@ class TestStyleAnalysis(unittest.TestCase):
     def test_style_brief_new_fields(self):
         """style_brief 渲染新风格维度；旧 analysis（缺新字段）不报错不输出。"""
         from trans_novel.agents.analyzer import Analyzer
-        from trans_novel.llm.base import FakeClient as FC
+        from trans_novel.llm.providers.fake import FakeClient as FC
 
         cfg = _config("state")
         ana = Analyzer(FC(), cfg)
