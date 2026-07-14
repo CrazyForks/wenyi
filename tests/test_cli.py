@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
-from trans_novel.cli import _configure_windows_console, app
+from trans_novel.cli import _apply_store_languages, _configure_windows_console, app
 from trans_novel.config import Config
 
 
@@ -19,6 +19,21 @@ class FakeStore:
 
 
 class TestCliConfig(unittest.TestCase):
+    def test_standalone_tools_restore_manifest_languages(self):
+        cfg = Config.from_dict(
+            {"language": {"source": "auto", "target": "zh"}}
+        )
+
+        class Store:
+            @staticmethod
+            def load_manifest():
+                return {"source_lang": "ru", "target_lang": "en"}
+
+        _apply_store_languages(cfg, Store())
+
+        self.assertEqual(cfg.source_lang, "ru")
+        self.assertEqual(cfg.target_lang, "en")
+
     def test_every_cli_start_checks_default_config(self):
         runner = CliRunner()
         with patch.object(Config, "create_default_file", return_value=True) as create:

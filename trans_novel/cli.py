@@ -120,6 +120,17 @@ def _runstore_for(config: Config, input_path: str) -> RunStore:
     return RunStore(run_dir, create=False)
 
 
+def _apply_store_languages(config: Config, store: RunStore) -> None:
+    """独立工具命令从运行 manifest 恢复实际语言。"""
+    manifest = store.load_manifest()
+    source_lang = manifest.get("source_lang")
+    target_lang = manifest.get("target_lang")
+    if isinstance(source_lang, str) and source_lang:
+        config.source_lang = source_lang
+    if isinstance(target_lang, str) and target_lang:
+        config.target_lang = target_lang
+
+
 def _translate_impl(
     input_path: str,
     *,
@@ -416,9 +427,12 @@ def qa(input: str = typer.Argument(..., help="输入文件")):
     if not store.exists():
         console.print("[yellow]尚无进度。先运行 translate。[/]")
         raise typer.Exit(1)
+    _apply_store_languages(config, store)
     g = GlossaryStore(store.glossary_path)
-    issues = ConsistencyChecker(build_client(config), config).check(store, g)
-    g.close()
+    try:
+        issues = ConsistencyChecker(build_client(config), config).check(store, g)
+    finally:
+        g.close()
     console.print(f"一致性问题 {len(issues)} 项：")
     for it in issues:
         console.print(
