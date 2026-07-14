@@ -15,6 +15,7 @@ import zipfile
 from bs4 import BeautifulSoup, Comment, NavigableString, UnicodeDammit
 from bs4.element import Tag
 
+from ..ingest.fb2_reader import read_fb2_binaries
 from ..ingest.models import KIND_HEADING, Chapter
 from ..pipeline.runstore import RunStore
 from .about import append_about_page
@@ -31,6 +32,13 @@ _VERTICAL_MARKERS = (
 )
 _HORIZONTAL_OVERRIDE_ID = "trans-novel-horizontal-override"
 _BILINGUAL_STYLE_ID = "tn-bilingual-style"
+_IMAGE_EXTENSION_BY_TYPE = {
+    "image/gif": ".gif",
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/svg+xml": ".svg",
+    "image/webp": ".webp",
+}
 _INLINE_META_KEY = "epub_inline"
 _INLINE_ID_ATTR = "data-tn-inline-id"
 _NON_TEXT_INLINE_TAGS = {
@@ -561,12 +569,13 @@ def _inject_bilingual_style(
 
 def _build_epub_from_chapters(
     store: RunStore,
+    source_path: str,
     out_path: str,
     *,
     bilingual: bool = False,
     order: str = "target_first",
 ) -> str:
-    """从章节数据生成一个规范的 EPUB3（用于纯文本输入），使用 ebooklib。"""
+    """从章节数据生成一个规范的 EPUB3（用于 TXT/FB2 输入），使用 ebooklib。"""
     from html import escape
 
     from ebooklib import epub
@@ -583,11 +592,65 @@ def _build_epub_from_chapters(
     spine: list = ["nav"]
     toc: list = []
     chapter_filenames: set[str] = set()
+    image_hrefs: dict[str, str] = {}
+    raw_meta = m.get("meta")
+    manifest_meta = raw_meta if isinstance(raw_meta, dict) else {}
+    if m.get("fmt") == "fb2":
+        binaries = read_fb2_binaries(source_path)
+        cover_id = manifest_meta.get("fb2_cover_image")
+        used_hrefs: set[str] = set()
+        for index, (resource_id, (content_type, payload)) in enumerate(
+            binaries.items()
+        ):
+            stem, extension = os.path.splitext(os.path.basename(resource_id))
+            safe_stem = _sanitize_filename(stem, f"image-{index}")
+            extension = extension.lower() or _IMAGE_EXTENSION_BY_TYPE.get(
+                content_type, ".bin"
+            )
+            href = f"images/{safe_stem}{extension}"
+            suffix = 2
+            while href in used_hrefs:
+                href = f"images/{safe_stem}-{suffix}{extension}"
+                suffix += 1
+            used_hrefs.add(href)
+            image_hrefs[resource_id] = href
+            if resource_id == cover_id:
+                book.set_cover(href, payload, create_page=True)
+            else:
+                book.add_item(
+                    epub.EpubItem(
+                        uid=f"fb2-image-{index}",
+                        file_name=href,
+                        media_type=content_type,
+                        content=payload,
+                    )
+                )
+
     for c in m["chapters"]:
         ch = store.load_chapter(c["index"])
         ch_title = _ch_title(c) or ch.title
         body_parts = []
-        for kind, target, source in _merged_paragraphs(ch):
+        images_by_position: dict[int, list[str]] = {}
+        raw_images = ch.meta.get("fb2_images")
+        if isinstance(raw_images, list):
+            for image in raw_images:
+                if not isinstance(image, dict):
+                    continue
+                position = image.get("position")
+                resource_id = image.get("id")
+                if not isinstance(position, int) or not isinstance(resource_id, str):
+                    continue
+                href = image_hrefs.get(resource_id)
+                if href:
+                    images_by_position.setdefault(position, []).append(href)
+
+        paragraphs = _merged_paragraphs(ch)
+        for position, (kind, target, source) in enumerate(paragraphs):
+            body_parts.extend(
+                f'<div class="fb2-image"><img src="{escape(href, quote=True)}" '
+                'alt=""/></div>'
+                for href in images_by_position.get(position, [])
+            )
             tag = "h1" if kind == KIND_HEADING else "p"
             target_html = f"<{tag}>{escape(target)}</{tag}>"
             src = (
@@ -606,6 +669,11 @@ def _build_epub_from_chapters(
                 body_parts.extend((src_html, target_html))
             else:
                 body_parts.extend((target_html, src_html))
+        body_parts.extend(
+            f'<div class="fb2-image"><img src="{escape(href, quote=True)}" '
+            'alt=""/></div>'
+            for href in images_by_position.get(len(paragraphs), [])
+        )
         fname = f"ch{c['index']}.xhtml"
         chapter_filenames.add(fname)
         item = epub.EpubHtml(title=ch_title, file_name=fname, lang=lang)
@@ -660,7 +728,7 @@ def assemble(
     else:
         # fb2 / text → 从章节数据生成规范 EPUB
         result = _build_epub_from_chapters(
-            store, out_path, bilingual=bilingual, order=order
+            store, source_path, out_path, bilingual=bilingual, order=order
         )
     if about_page:
         append_about_page(result, _epub_lang(m.get("target_lang", "zh")))

@@ -32,6 +32,23 @@ from tests.sample_data import (
 from tests.fake_llm import routing_handler
 
 
+_FB2_WITH_IMAGES = """\
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"
+             xmlns:xlink="http://www.w3.org/1999/xlink">
+<description><title-info>
+  <book-title>Illustrated Book</book-title>
+  <coverpage><image xlink:href="#cover.jpg"/></coverpage>
+</title-info></description>
+<body><section><title><p>Chapter</p></title>
+  <image xlink:href="#inside.png"/><p>Illustrated text.</p>
+</section></body>
+<binary id="cover.jpg" content-type="image/jpeg">Y292ZXItYnl0ZXM=</binary>
+<binary id="inside.png" content-type="image/png">aW5zaWRlLWJ5dGVz</binary>
+</FictionBook>
+"""
+
+
 def _write_vertical_epub(path: str) -> None:
     container = """<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -88,6 +105,32 @@ def _run(input_path, state_dir):
 
 
 class TestAssembleText(unittest.TestCase):
+    def test_fb2_images_and_cover_are_preserved_in_generated_epub(self):
+        with tempfile.TemporaryDirectory() as d:
+            fb2 = os.path.join(d, "illustrated.fb2")
+            with open(fb2, "w", encoding="utf-8") as file:
+                file.write(_FB2_WITH_IMAGES)
+            store, _ = _run(fb2, os.path.join(d, "state"))
+
+            out = assemble(store, fb2, out_format="epub", about_page=False)
+
+            with zipfile.ZipFile(out) as archive:
+                names = archive.namelist()
+                cover_name = next(name for name in names if name.endswith("images/cover.jpg"))
+                inside_name = next(name for name in names if name.endswith("images/inside.png"))
+                chapter_name = next(name for name in names if name.endswith("/ch0.xhtml"))
+                chapter = BeautifulSoup(archive.read(chapter_name), "html.parser")
+                package_name = next(name for name in names if name.endswith("content.opf"))
+                package = BeautifulSoup(archive.read(package_name), "xml")
+
+                self.assertEqual(archive.read(cover_name), b"cover-bytes")
+                self.assertEqual(archive.read(inside_name), b"inside-bytes")
+
+        image = chapter.find("img", src="images/inside.png")
+        self.assertIsNotNone(image)
+        cover_item = package.find("item", properties="cover-image")
+        self.assertIsNotNone(cover_item)
+
     def test_txt_input_to_txt(self):
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
