@@ -130,12 +130,26 @@ def normalize_zh(text: str) -> str:
     return normalized
 
 
-def normalize_zh_segments(texts: list[str]) -> list[str]:
-    """按连续段落规范化中文标点，使跨段直引号保持同一配对状态。"""
+def normalize_zh_segments(
+    texts: list[str],
+    continuations: list[bool] | None = None,
+) -> list[str]:
+    """按逻辑原段规范化标点，只在 cont=True 的切分续段间传递状态。
+
+    普通段落即使缺失引号也不会改变下一段的开闭判断，避免错误级联污染后文。
+    """
+    if continuations is None:
+        continuations = [False] * len(texts)
+    if len(continuations) != len(texts):
+        raise ValueError("texts 与 continuations 数量必须一致")
+
     normalized: list[str] = []
     double_open = True
     single_open = True
-    for text in texts:
+    for index, (text, continuation) in enumerate(zip(texts, continuations)):
+        if index == 0 or not continuation:
+            double_open = True
+            single_open = True
         value, double_open, single_open = _normalize_with_quote_state(
             text,
             double_open=double_open,

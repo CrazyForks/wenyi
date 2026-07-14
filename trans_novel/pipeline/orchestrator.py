@@ -608,7 +608,10 @@ class Orchestrator:
         # 标点在章级统一处理，直引号状态才能跨批次、跨段保持连续。
         if self._punctuation_enabled():
             translated = [segment.target or "" for segment in text_segs]
-            normalized_targets = normalize_zh_segments(translated)
+            normalized_targets = normalize_zh_segments(
+                translated,
+                [segment.cont for segment in text_segs],
+            )
             for segment, normalized in zip(text_segs, normalized_targets):
                 segment.target = normalized
             # 当前章译文已在逐批处理中加入滚动上下文；同步替换其保留在尾部的

@@ -75,11 +75,27 @@ class TestPunct(unittest.TestCase):
     def test_word_final_apostrophe_is_a_right_apostrophe(self):
         self.assertEqual(normalize_zh("James' book"), "James’ book")
 
-    def test_quotes_are_paired_across_segments(self):
+    def test_quotes_are_paired_across_split_continuations(self):
         self.assertEqual(
-            normalize_zh_segments(['"第一段', '第二段"', '"下一句"']),
+            normalize_zh_segments(
+                ['"第一段', '第二段"', '"下一句"'],
+                [False, True, False],
+            ),
             ["“第一段", "第二段”", "“下一句”"],
         )
+
+    def test_unmatched_quote_does_not_leak_into_next_paragraph(self):
+        self.assertEqual(
+            normalize_zh_segments(
+                ['"缺少右引号', '"新的完整对话"'],
+                [False, False],
+            ),
+            ["“缺少右引号", "“新的完整对话”"],
+        )
+
+    def test_continuation_flags_must_align_with_texts(self):
+        with self.assertRaisesRegex(ValueError, "数量必须一致"):
+            normalize_zh_segments(["第一段"], [])
 
     def test_non_chinese_target_does_not_enable_chinese_normalization(self):
         with tempfile.TemporaryDirectory() as directory:
