@@ -26,7 +26,7 @@ from ..llm.base import LLMClient
 from ..llm.factory import build_client
 from ..llm.usage import merge_usage_summaries, usage_delta
 from ..ingest.segmenter import load_document, batch_segments
-from ..postprocess.punct import normalize_zh
+from ..postprocess.punct import normalize_zh, normalize_zh_segments
 from ..agents.analyzer import Analyzer
 from ..agents.synopsis import Synopsizer
 from ..agents.translator import Translator
@@ -83,6 +83,12 @@ class Orchestrator:
         self.backtrans = BackTranslator(self.client, config)
         self.polisher = Polisher(self.client, config)
         self.extractor = GlossaryExtractor(self.client, config)
+
+    def _punctuation_enabled(self) -> bool:
+        target = (self.config.target_lang or "").lower().replace("_", "-")
+        return self.config.punctuation_normalize and (
+            target == "zh" or target.startswith("zh-")
+        )
 
     def _flush_usage(self, store: RunStore, *, scope: str) -> dict[str, Any]:
         """把当前 client 尚未落盘的用量增量合并到本书 usage.json。"""
@@ -512,7 +518,7 @@ class Orchestrator:
                 start_index=batch_start,
                 count=len(b),
                 polished=self.config.pipeline.polish,
-                punctuation_normalized=self.config.punctuation_normalize,
+                punctuation_normalized=self._punctuation_enabled(),
                 issues=res.issues,
                 backtranslate_sample_count=len(res.bt_samples),
                 segments=[
@@ -537,6 +543,18 @@ class Orchestrator:
             self._extract_batch_glossary(glossary, store, ci, batch_start, b)
             glossary_checkpoints.add(glossary_key)
             term_snapshot = self._chapter_term_snapshot(glossary, text_segs)
+
+        # 标点在章级统一处理，直引号状态才能跨批次、跨段保持连续。
+        if self._punctuation_enabled():
+            translated = [segment.target or "" for segment in text_segs]
+            normalized_targets = normalize_zh_segments(translated)
+            for segment, normalized in zip(text_segs, normalized_targets):
+                segment.target = normalized
+            # 当前章译文已在逐批处理中加入滚动上下文；同步替换其保留在尾部的
+            # 部分，确保下一章看到的是最终规范化版本。
+            retained = min(len(normalized_targets), len(context.recent_targets))
+            if retained:
+                context.recent_targets[-retained:] = normalized_targets[-retained:]
 
         # 全章术语抽取入库：保留为兜底，捕捉跨段才能确认的称呼/口癖/固定表达。
         # 放在 review 前，让本章审校也能使用兜底抽出的术语。
@@ -721,7 +739,7 @@ class Orchestrator:
                 context_before=before, context_after=after,
                 book_synopsis=book_synopsis, chapter_digest=chapter_digest)
             if new_t and not checks.length_flags([seg.source], [new_t]):
-                if self.config.punctuation_normalize:
+                if self._punctuation_enabled():
                     new_t = normalize_zh(new_t)
                 old_t = seg.target
                 seg.target = new_t
@@ -767,9 +785,6 @@ class Orchestrator:
             polished = self.polisher.polish(targets, glossary_terms=terms, style=style)
             if len(polished) == len(targets):
                 targets = polished
-
-        if self.config.punctuation_normalize:
-            targets = [normalize_zh(t) if t else t for t in targets]
 
         bt_samples: list[tuple[str, str]] = []
         rate = self.config.pipeline.backtranslate_sample

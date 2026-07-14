@@ -9,7 +9,7 @@ import unittest
 import zipfile
 
 from trans_novel.config import Config
-from trans_novel.postprocess.punct import normalize_zh
+from trans_novel.postprocess.punct import normalize_zh, normalize_zh_segments
 from trans_novel.llm.providers.fake import FakeClient
 from trans_novel.pipeline.orchestrator import Orchestrator
 from tests.sample_data import write_sample_txt
@@ -66,9 +66,32 @@ class TestPunct(unittest.TestCase):
 
     def test_no_harm_to_english_numbers(self):
         self.assertEqual(normalize_zh("9.11 vs 9.8"), "9.11 vs 9.8")
+        self.assertEqual(normalize_zh("Mr.王"), "Mr.王")
 
     def test_ellipsis_and_dash(self):
         self.assertEqual(normalize_zh("等等...走了--他笑了"), "等等……走了——他笑了")
+
+    def test_word_final_apostrophe_is_a_right_apostrophe(self):
+        self.assertEqual(normalize_zh("James' book"), "James’ book")
+
+    def test_quotes_are_paired_across_segments(self):
+        self.assertEqual(
+            normalize_zh_segments(['"第一段', '第二段"', '"下一句"']),
+            ["“第一段", "第二段”", "“下一句”"],
+        )
+
+    def test_non_chinese_target_does_not_enable_chinese_normalization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cfg = Config.from_dict(
+                {
+                    "language": {"source": "zh", "target": "en"},
+                    "llm": {"provider": "fake"},
+                    "paths": {"state_dir": os.path.join(directory, "state")},
+                }
+            )
+            orchestrator = Orchestrator(cfg, client=FakeClient())
+
+        self.assertFalse(orchestrator._punctuation_enabled())
 
 
 class TestRunAll(unittest.TestCase):

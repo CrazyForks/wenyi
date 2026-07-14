@@ -26,34 +26,47 @@ _CJK_RE = f"[{_CJK}]"
 _HALF_TO_FULL = {",": "，", ".": "。", "!": "！", "?": "？", ":": "：", ";": "；"}
 
 
-def _convert_quotes(text: str) -> str:
+def _convert_quotes(
+    text: str,
+    *,
+    double_open: bool = True,
+    single_open: bool = True,
+) -> tuple[str, bool, bool]:
     # 日式引号直接映射
     text = text.translate(str.maketrans({"「": "“", "」": "”", "『": "‘", "』": "’"}))
 
     # 英式直双引号：按出现次序交替配对 → “ ”
     out = []
-    open_dq = True
     for ch in text:
         if ch == '"':
-            out.append("“" if open_dq else "”")
-            open_dq = not open_dq
+            out.append("“" if double_open else "”")
+            double_open = not double_open
         else:
             out.append(ch)
     text = "".join(out)
 
-    # 直单引号：仅当成对出现于引用语境时转弯引号；撇号（被字母包夹）保留为 ’
-    def _single(m: re.Match) -> str:
-        return "’"  # 英文撇号统一为右单引号字形
-    text = re.sub(r"(?<=[A-Za-z])'(?=[A-Za-z])", _single, text)
-    # 其余成对单引号交替配对
-    out, open_sq = [], True
-    for ch in text:
+    # 直单引号：字母内撇号不改变引号状态；词尾撇号与右引号都输出 ’，
+    # 但只有当前位于引语内时才关闭引号。
+    out = []
+    for index, ch in enumerate(text):
         if ch == "'":
-            out.append("‘" if open_sq else "’")
-            open_sq = not open_sq
+            before = text[index - 1] if index else ""
+            after = text[index + 1] if index + 1 < len(text) else ""
+            before_letter = before.isascii() and before.isalpha()
+            after_letter = after.isascii() and after.isalpha()
+            if before_letter and after_letter:
+                out.append("’")
+            elif before_letter and not single_open:
+                out.append("’")
+                single_open = True
+            elif before_letter:
+                out.append("’")
+            else:
+                out.append("‘" if single_open else "’")
+                single_open = not single_open
         else:
             out.append(ch)
-    return "".join(out)
+    return "".join(out), double_open, single_open
 
 
 def _convert_ellipsis_dash(text: str) -> str:
@@ -63,7 +76,6 @@ def _convert_ellipsis_dash(text: str) -> str:
     text = re.sub(r"…+", "……", text)          # 单个/多个 … → ……
     text = re.sub(r"-{2,}", "——", text)
     text = re.sub(r"—{1,}", "——", text)        # — / —— 归一为 ——
-    text = re.sub(r"——(——)+", "——", text)
     return text
 
 
@@ -72,20 +84,62 @@ def _convert_halfwidth(text: str) -> str:
     def repl(m: re.Match) -> str:
         return _HALF_TO_FULL[m.group(0)]
 
-    # 标点左侧或右侧是 CJK 即转（避免误伤英文/数字内部）
+    # 标点左侧是 CJK 时转换；只与右侧 CJK 相邻时，若左侧是 ASCII
+    # 字母/数字则保留，避免把 Mr.王、v2.版本 之类的边界误改。
     pattern = re.compile(
         rf"(?<={_CJK_RE})[,.!?:;]|[,.!?:;](?={_CJK_RE})"
     )
-    return pattern.sub(repl, text)
+    return pattern.sub(
+        lambda match: (
+            match.group(0)
+            if match.start() > 0 and text[match.start() - 1].isascii()
+            and text[match.start() - 1].isalnum()
+            else repl(match)
+        ),
+        text,
+    )
+
+
+def _normalize_with_quote_state(
+    text: str,
+    *,
+    double_open: bool,
+    single_open: bool,
+) -> tuple[str, bool, bool]:
+    if not text:
+        return text, double_open, single_open
+    text, double_open, single_open = _convert_quotes(
+        text,
+        double_open=double_open,
+        single_open=single_open,
+    )
+    text = _convert_ellipsis_dash(text)
+    text = _convert_halfwidth(text)
+    text = re.sub(r"([，。！？：；、])\s+", r"\1", text)
+    text = re.sub(rf"([”’》】])\s+(?={_CJK_RE})", r"\1", text)
+    return text, double_open, single_open
 
 
 def normalize_zh(text: str) -> str:
     """把一段中文译文的标点规范化为简体中文通用全角标点。"""
-    if not text:
-        return text
-    text = _convert_quotes(text)
-    text = _convert_ellipsis_dash(text)
-    text = _convert_halfwidth(text)
-    # 全角标点后的多余空格清理（中文标点后不留空格）
-    text = re.sub(r"([，。！？：；、”’》】])\s+", r"\1", text)
-    return text
+    normalized, _, _ = _normalize_with_quote_state(
+        text,
+        double_open=True,
+        single_open=True,
+    )
+    return normalized
+
+
+def normalize_zh_segments(texts: list[str]) -> list[str]:
+    """按连续段落规范化中文标点，使跨段直引号保持同一配对状态。"""
+    normalized: list[str] = []
+    double_open = True
+    single_open = True
+    for text in texts:
+        value, double_open, single_open = _normalize_with_quote_state(
+            text,
+            double_open=double_open,
+            single_open=single_open,
+        )
+        normalized.append(value)
+    return normalized
