@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import re
 import zipfile
+from html import escape
 
 from bs4 import BeautifulSoup
 
@@ -57,6 +58,11 @@ def _sanitize_filename(name: str, fallback: str = "translated") -> str:
 
 
 _OUT_EXT = {"epub": ".epub", "txt": ".txt", "html": ".html", "markdown": ".md"}
+
+
+def _ensure_parent_dir(path: str) -> None:
+    """Create the output directory while allowing a bare filename."""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
 
 
 def _default_out(
@@ -157,7 +163,8 @@ def _assemble_text(
         f.write("\n\n".join(chapter_blocks) + "\n")
     return out_path
 
-# ── markdown ────────────────────────────────────────────────────────────────── 
+
+# ── markdown ──────────────────────────────────────────────────────────────────
 def _assemble_markdown(
     store: RunStore,
     out_path: str,
@@ -169,11 +176,13 @@ def _assemble_markdown(
     chapter_blocks: list[str] = []
     for c in m["chapters"]:
         ch = store.load_chapter(c["index"])
-        heading_prefix = "#" * ch.meta.get("heading_level", 1) + " "   # 添加标题层级
+        level = ch.meta.get("heading_level", 1)
+        level = level if isinstance(level, int) and 1 <= level <= 6 else 1
+        heading_prefix = "#" * level + " "
         blocks: list[str] = []
         for kind, target, source in _merged_paragraphs(ch):
-            if kind == KIND_HEADING: 
-                target = heading_prefix + target 
+            if kind == KIND_HEADING:
+                target = heading_prefix + target
             src = (
                 _bilingual_source(source, target)
                 if (bilingual and kind != KIND_HEADING)
@@ -189,6 +198,7 @@ def _assemble_markdown(
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n\n".join(chapter_blocks) + "\n")
     return out_path
+
 
 # ── EPUB ────────────────────────────────────────────────────────────────────
 def _render_chapter_html(
@@ -404,20 +414,45 @@ def _assemble_html(
     m = store.load_manifest()
     raw_meta = m.get("meta")
     meta = raw_meta if isinstance(raw_meta, dict) else {}
-    head_html = meta.get("head_html", "")
+    raw_head_html = meta.get("head_html", "")
+    head_html = raw_head_html if isinstance(raw_head_html, str) else ""
+    if bilingual and _BILINGUAL_STYLE_ID not in head_html:
+        head_html += f'<style id="{_BILINGUAL_STYLE_ID}">\n{_BILINGUAL_CSS}</style>'
 
     body_parts: list[str] = []
     for c in m["chapters"]:
         ch = store.load_chapter(c["index"])
-        if not ch.template:
+        if ch.template:
+            # 复用 EPUB 的章节渲染（替换 data-tn-id → 译文，处理 cont 续段与双语）
+            body_parts.append(
+                _render_chapter_html(ch, bilingual=bilingual, order=order)
+            )
             continue
-        # 复用 EPUB 的章节渲染（替换 data-tn-id → 译文，处理 cont 续段与双语）
-        body_parts.append(
-            _render_chapter_html(ch, bilingual=bilingual, order=order)
-        )
+
+        # TXT / Markdown 等无 HTML 模板的输入也必须能导出正文。
+        for kind, target, source in _merged_paragraphs(ch):
+            if kind == KIND_HEADING:
+                level = ch.meta.get("heading_level", 1)
+                level = level if isinstance(level, int) and 1 <= level <= 6 else 1
+                target_html = f"<h{level}>{escape(target)}</h{level}>"
+            else:
+                target_html = f"<p>{escape(target)}</p>"
+            src = (
+                _bilingual_source(source, target)
+                if (bilingual and kind != KIND_HEADING)
+                else ""
+            )
+            if not src:
+                body_parts.append(target_html)
+                continue
+            source_html = f'<p class="tn-source">{escape(src)}</p>'
+            if order == "source_first":
+                body_parts.extend((source_html, target_html))
+            else:
+                body_parts.extend((target_html, source_html))
 
     full_html = f"""<!DOCTYPE html>
-<html>
+<html lang="{escape(_epub_lang(m.get("target_lang", "zh")))}">
 <head>
 {head_html}
 </head>
@@ -426,7 +461,6 @@ def _assemble_html(
 </body>
 </html>"""
 
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(full_html)
     return out_path
@@ -557,8 +591,6 @@ def _build_epub_from_chapters(
     order: str = "target_first",
 ) -> str:
     """从章节数据生成一个规范的 EPUB3（用于纯文本输入），使用 ebooklib。"""
-    from html import escape
-
     from ebooklib import epub
 
     m = store.load_manifest()
@@ -612,7 +644,6 @@ def _build_epub_from_chapters(
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
     book.spine = spine
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
     epub.write_epub(out_path, book)
     if bilingual:
         _inject_bilingual_style(out_path, chapter_filenames, lang)
@@ -635,24 +666,34 @@ def assemble(
       - 原文是 EPUB → 按原模板回填，保留排版/资源；
       - 原文是纯文本 → 生成一个规范的 EPUB（标题 h1 + 段落 p）。
     out_format="txt"：无论原文格式，按章重建为纯文本。
-    out_format="markdown"：无论原文格式，按章重建为markdown。
+    out_format="html"：优先回填 HTML 模板，无模板时按章重建。
+    out_format="markdown"：无论原文格式，按章重建为 Markdown。
     bilingual=True 时额外输出原文（淡背景块），order 控制译文/原文先后。
     about_page=True 时在书末附加“关于此翻译”说明页。
     """
-    # txt
+    if out_format not in _OUT_EXT:
+        supported = " / ".join(_OUT_EXT)
+        raise ValueError(f"不支持的输出格式：{out_format}（支持 {supported}）")
+
     m = store.load_manifest()
     if out_format == "txt":
         out_path = out_path or _default_out(source_path, "txt", "", bilingual=bilingual)
+        _ensure_parent_dir(out_path)
         return _assemble_text(store, out_path, bilingual=bilingual, order=order)
     if out_format == "html":
-        out_path = out_path or _default_out(source_path, "html", "", bilingual=bilingual)
+        out_path = out_path or _default_out(
+            source_path, "html", "", bilingual=bilingual
+        )
+        _ensure_parent_dir(out_path)
         return _assemble_html(store, out_path, bilingual=bilingual, order=order)
-    # markdown
     if out_format == "markdown":
-        out_path = out_path or _default_out(source_path, "markdown", "", bilingual=bilingual)
+        out_path = out_path or _default_out(
+            source_path, "markdown", "", bilingual=bilingual
+        )
+        _ensure_parent_dir(out_path)
         return _assemble_markdown(store, out_path, bilingual=bilingual, order=order)
-    # epub
     out_path = out_path or _default_out(source_path, "epub", "", bilingual=bilingual)
+    _ensure_parent_dir(out_path)
     if m["fmt"] == "epub":
         result = _assemble_epub(
             store, source_path, out_path, bilingual=bilingual, order=order

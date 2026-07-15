@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 import re
 
-from .models import Chapter, Document, Segment, KIND_HEADING, KIND_TEXT
+from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
 
 # Markdown 标题
 _MD_HEADING = re.compile(r"^(#{1,3})\s+(.*\S)\s*$")
@@ -33,7 +33,7 @@ def _is_chapter_heading(line: str) -> tuple[str, int] | None:
     if m:
         return m.group(2).strip(), len(m.group(1))
     if _JA_CHAPTER.match(line):
-        return line.strip(), # 日文章节标记默认作为 h1
+        return line.strip(), 1  # 日文章节标记默认作为 h1
     return None
 
 
@@ -53,14 +53,16 @@ def read_text(path: str, source_lang: str, target_lang: str) -> Document:
     # 先按章节标题切块
     chapters_raw: list[tuple[str, int, list[str]]] = []  # (title, level, body_lines)
     current_title: str | None = None
-    current_level: int
+    current_level = 1
     current_body: list[str] = []
     for line in lines:
         heading_info = _is_chapter_heading(line)
         if heading_info is not None:
             title, level = heading_info
             if current_title is not None or current_body:
-                chapters_raw.append((current_title or book_title, current_level, current_body))
+                chapters_raw.append(
+                    (current_title or book_title, current_level, current_body)
+                )
             current_title = title
             current_level = level
             current_body = []
@@ -74,14 +76,21 @@ def read_text(path: str, source_lang: str, target_lang: str) -> Document:
         segments: list[Segment] = []
         idx = 0
         # 标题作为 heading segment（便于翻译并回填）
-        if title and title != book_title or len(chapters_raw) > 1:
+        if (title and title != book_title) or len(chapters_raw) > 1:
             segments.append(Segment(index=idx, source=title, kind=KIND_HEADING))
             idx += 1
         body = "\n".join(body_lines)
         for para in _split_paragraphs(body):
             segments.append(Segment(index=idx, source=para, kind=KIND_TEXT))
             idx += 1
-        chapters.append(Chapter(index=ci, title=title, segments=segments, meta={"heading_level": level}))
+        chapters.append(
+            Chapter(
+                index=ci,
+                title=title,
+                segments=segments,
+                meta={"heading_level": level},
+            )
+        )
 
     return Document(
         title=book_title,

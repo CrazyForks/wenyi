@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from .html_reader import read_html
 from .models import Document
@@ -69,12 +70,14 @@ def read_pdf(
     if not os.path.isfile(html_path):
         _check_deps()
         from .pdf_to_html import convert_pdf_to_html  # noqa: E402
+
         convert_pdf_to_html(path, html_path, api_token=api_token)
 
     # 用 html_reader 解析中间 HTML
     doc = read_html(html_path, source_lang, target_lang)
 
     # 覆盖为 PDF 原始信息
+    doc.title = Path(path).stem
     doc.fmt = "pdf"
     doc.source_path = os.path.abspath(path)
     doc.meta["pdf_path"] = doc.source_path

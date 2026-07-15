@@ -34,6 +34,7 @@ _DEFAULT_CHAPTER_TAGS: frozenset[str] = frozenset(_HEADING_TAGS)
 
 # ── 内部辅助 ─────────────────────────────────────────────
 
+
 def _extract_chapter(
     html: str,
     chapter_index: int,
@@ -76,6 +77,7 @@ def _extract_chapter(
 
 # ── 公开 API ──────────────────────────────────────────────
 
+
 def read_html(
     path: str,
     source_lang: str,
@@ -112,8 +114,8 @@ def read_html(
     # 书名直接从文件名提取（与 text_reader 对齐）
     book_title = os.path.splitext(os.path.basename(path))[0]
 
-    # 保存 <head> 供后续回填重建完整 HTML
-    head_html = str(soup.head) if soup.head else ""
+    # 只保存 <head> 的内容，导出时由 writer 统一创建外层 <head>。
+    head_html = soup.head.decode_contents() if soup.head else ""
 
     body = soup.body if soup.body else soup
 
@@ -173,20 +175,23 @@ def read_html(
             chapter_title = " / ".join(titles)
 
         title, segments, template = _extract_chapter(
-            fragment_html, ci,
+            fragment_html,
+            ci,
             chapter_title=chapter_title,
         )
 
         if not any(s.source.strip() for s in segments):
             continue
 
-        chapters.append(Chapter(
-            index=ci,
-            title=title,
-            segments=segments,
-            href=None,
-            template=template,
-        ))
+        chapters.append(
+            Chapter(
+                index=ci,
+                title=title,
+                segments=segments,
+                href=None,
+                template=template,
+            )
+        )
         ci += 1
 
     return Document(

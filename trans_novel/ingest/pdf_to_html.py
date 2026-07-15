@@ -33,6 +33,7 @@ MAX_WAIT_PER_TASK = 600
 
 # ── errors ──
 
+
 class MinerUError(RuntimeError):
     """Raised when the MinerU API returns an error."""
 
@@ -42,6 +43,7 @@ class MinerUTimeoutError(MinerUError):
 
 
 # ── API client ──
+
 
 class MinerUApi:
     """Thin HTTP client for MinerU Precision API (v4)."""
@@ -65,11 +67,14 @@ class MinerUApi:
         """Upload files, wait for extraction, return list of ZIP bytes in order."""
         # 1. Request pre-signed upload URLs
         files_meta = [{"name": Path(p).name} for p in file_paths]
-        resp = self._client.post("/file-urls/batch", json={
-            "files": files_meta,
-            "model_version": "vlm",
-            "extra_formats": ["html"],
-        })
+        resp = self._client.post(
+            "/file-urls/batch",
+            json={
+                "files": files_meta,
+                "model_version": "vlm",
+                "extra_formats": ["html"],
+            },
+        )
         resp.raise_for_status()
         data = _check(resp.json())["data"]
 
@@ -85,9 +90,7 @@ class MinerUApi:
         # 3. Poll until all done
         return self._poll_batch(data["batch_id"], timeout)
 
-    def _poll_batch(
-        self, batch_id: str, timeout: int
-    ) -> list[bytes]:
+    def _poll_batch(self, batch_id: str, timeout: int) -> list[bytes]:
         deadline = time.monotonic() + timeout
         interval = POLL_INTERVAL
         while True:
@@ -121,6 +124,7 @@ class MinerUApi:
 
 # ── PDF splitting ──
 
+
 def _split_pdf(pdf_path: str, max_pages: int = MAX_PAGES) -> list[Path]:
     reader = PdfReader(pdf_path)
     total = len(reader.pages)
@@ -140,6 +144,7 @@ def _split_pdf(pdf_path: str, max_pages: int = MAX_PAGES) -> list[Path]:
 
 
 # ── HTML helpers ──
+
 
 def _html_from_zip(zip_bytes: bytes) -> str:
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
@@ -176,11 +181,12 @@ def _clean_head(html: str) -> str:
         return ""
     head = m.group(1)
     head = re.sub(r"<title[^>]*>.*?</title>", "", head, flags=re.DOTALL | re.IGNORECASE)
-    head = re.sub(r'<meta[^>]*charset[^>]*/?>', "", head, flags=re.IGNORECASE)
+    head = re.sub(r"<meta[^>]*charset[^>]*/?>", "", head, flags=re.IGNORECASE)
     return head.strip()
 
 
 # ── helpers ──
+
 
 def _check(body: dict) -> dict:
     if body.get("code") != 0:
@@ -260,7 +266,11 @@ def convert_pdf_to_html(
         for cp in owned:
             cp.unlink(missing_ok=True)
 
-    html = html_parts[0] if len(html_parts) == 1 else _assemble_html(html_parts, Path(pdf_path).name)
+    html = (
+        html_parts[0]
+        if len(html_parts) == 1
+        else _assemble_html(html_parts, Path(pdf_path).name)
+    )
     Path(output_path).write_text(html, encoding="utf-8")
     msg(f"Done → {output_path} ({len(html):,} chars)")
     return output_path
@@ -268,9 +278,10 @@ def convert_pdf_to_html(
 
 # ── CLI ──
 
+
 def main() -> None:
     if len(sys.argv) < 2:
-        print(f"Usage: uv run python pdf_to_html.py <pdf_path> [output_html_path]")
+        print("Usage: uv run python pdf_to_html.py <pdf_path> [output_html_path]")
         sys.exit(1)
 
     try:
