@@ -182,11 +182,11 @@ def _print_usage(report: dict) -> None:
 # ── translate / resume：连续全流程 ──────────────────────────────────────────
 @app.command()
 def translate(
-    input: str = typer.Argument(..., help="输入文件（.epub / .txt / .md）"),
+    input: str = typer.Argument(..., help="输入文件（.epub / .txt / .md / .html / .fb2 / .pdf）"),
     chapter: Optional[int] = typer.Option(
         None, "--chapter", help="只翻指定章（调试用，不做收尾）"
     ),
-    fmt: str = typer.Option("epub", "--format", help="输出格式：epub | txt"),
+    fmt: str = typer.Option("epub", "--format", help="输出格式：epub | txt | html"),
     out: Optional[str] = typer.Option(
         None, "--out", help="输出路径（默认 <源文件目录>/output/<源文件名>.zh.<ext>）"
     ),
@@ -227,7 +227,7 @@ def translate(
 @app.command()
 def resume(
     input: str = typer.Argument(..., help="输入文件"),
-    fmt: str = typer.Option("epub", "--format", help="输出格式：epub | txt"),
+    fmt: str = typer.Option("epub", "--format", help="输出格式：epub | txt | html"),
 ):
     """断点续跑（等价于再次 translate）。"""
     _translate_impl(input, fmt=fmt)
@@ -322,7 +322,7 @@ def glossary(
 def assemble(
     input: str = typer.Argument(..., help="输入文件"),
     out: Optional[str] = typer.Option(None, "--out"),
-    fmt: str = typer.Option("epub", "--format", help="epub | txt"),
+    fmt: str = typer.Option("epub", "--format", help="epub | txt | html"),
     mono: Optional[bool] = typer.Option(
         None,
         "--mono/--no-mono",

@@ -56,6 +56,9 @@ def _sanitize_filename(name: str, fallback: str = "translated") -> str:
     return name[:120] or fallback
 
 
+_OUT_EXT = {"epub": ".epub", "txt": ".txt", "html": ".html"}
+
+
 def _default_out(
     source_path: str,
     out_format: str,
@@ -64,7 +67,7 @@ def _default_out(
     bilingual: bool = False,
 ) -> str:
     """Return the default export path under the input file's ``output`` folder."""
-    ext = ".epub" if out_format == "epub" else ".txt"
+    ext = _OUT_EXT.get(out_format, ".epub")
     output_dir = os.path.join(os.path.dirname(os.path.abspath(source_path)), "output")
     os.makedirs(output_dir, exist_ok=True)
     if title and title.strip():
@@ -357,6 +360,46 @@ def _rewrite_toc(data: bytes, title_by_base: dict[str, str], *, is_ncx: bool) ->
         return data
 
 
+# ── HTML ────────────────────────────────────────────────────────────────────
+def _assemble_html(
+    store: RunStore,
+    out_path: str,
+    *,
+    bilingual: bool = False,
+    order: str = "target_first",
+) -> str:
+    """回填 HTML 原文：逐章渲染 template，拼接为完整 HTML 输出。"""
+    m = store.load_manifest()
+    raw_meta = m.get("meta")
+    meta = raw_meta if isinstance(raw_meta, dict) else {}
+    head_html = meta.get("head_html", "")
+
+    body_parts: list[str] = []
+    for c in m["chapters"]:
+        ch = store.load_chapter(c["index"])
+        if not ch.template:
+            continue
+        # 复用 EPUB 的章节渲染（替换 data-tn-id → 译文，处理 cont 续段与双语）
+        body_parts.append(
+            _render_chapter_html(ch, bilingual=bilingual, order=order)
+        )
+
+    full_html = f"""<!DOCTYPE html>
+<html>
+<head>
+{head_html}
+</head>
+<body>
+{"".join(body_parts)}
+</body>
+</html>"""
+
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(full_html)
+    return out_path
+
+
 def _assemble_epub(
     store: RunStore,
     source_path: str,
@@ -537,6 +580,7 @@ def _build_epub_from_chapters(
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
     book.spine = spine
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
     epub.write_epub(out_path, book)
     if bilingual:
         _inject_bilingual_style(out_path, chapter_filenames, lang)
@@ -566,6 +610,9 @@ def assemble(
     if out_format == "txt":
         out_path = out_path or _default_out(source_path, "txt", "", bilingual=bilingual)
         return _assemble_text(store, out_path, bilingual=bilingual, order=order)
+    if out_format == "html":
+        out_path = out_path or _default_out(source_path, "html", "", bilingual=bilingual)
+        return _assemble_html(store, out_path, bilingual=bilingual, order=order)
     # epub
     out_path = out_path or _default_out(source_path, "epub", "", bilingual=bilingual)
     if m["fmt"] == "epub":
@@ -573,7 +620,7 @@ def assemble(
             store, source_path, out_path, bilingual=bilingual, order=order
         )
     else:
-        # fb2 / text → 从章节数据生成规范 EPUB
+        # fb2 / text / html → 从章节数据生成规范 EPUB
         result = _build_epub_from_chapters(
             store, out_path, bilingual=bilingual, order=order
         )

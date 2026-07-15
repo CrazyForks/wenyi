@@ -14,7 +14,9 @@ import re
 
 from .epub_reader import read_epub
 from .fb2_reader import read_fb2
+from .html_reader import read_html
 from .models import KIND_TEXT, Chapter, Document, Segment
+from .pdf_reader import read_pdf
 from .text_reader import read_text
 
 # 常见句末标点，用于超长段的按句拆分
@@ -95,8 +97,12 @@ def load_document(path: str, source_lang: str, target_lang: str,
         doc = read_text(path, source_lang, target_lang)
     elif ext == ".fb2":
         doc = read_fb2(path, source_lang, target_lang)
+    elif ext in (".html", ".htm"):
+        doc = read_html(path, source_lang, target_lang)
+    elif ext == ".pdf":
+        doc = read_pdf(path, source_lang, target_lang)
     else:
-        raise ValueError(f"不支持的格式：{ext}（支持 .epub / .txt / .md / .fb2）")
+        raise ValueError(f"不支持的格式：{ext}（支持 .epub / .txt / .md / .fb2 / .html / .pdf）")
 
     if split_segments and split_segments > 0:
         split_long_segments(doc.chapters, split_segments)
