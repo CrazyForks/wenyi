@@ -39,9 +39,9 @@ The glossary constrains later translation and the final review, but it does not 
 - **Final review:** starts only after every chapter has been translated, so each chapter derives its relevant term snapshot from the completed glossary rather than the glossary state from an earlier chapter. Chapters are divided into contiguous chunks and checked in parallel against fixed final translation and term snapshots; results are merged back in book order. Severe issues are only retranslated when `autofix_severe` is enabled.
 - **Whole-book consistency QA:** checks terminology, references, voice, and punctuation after translation. It reports issues by default without rewriting the text.
 
-The default one-command sequence is `translate -> review -> qa -> report -> assemble`.
-`pipeline.review: true` enables the final review in that sequence. Review is also
-available as an independent, resumable stage:
+Final review is disabled by default. Setting `pipeline.review: true` inserts it
+between translation and QA in the one-command workflow. Review is also available
+as an independent, resumable stage:
 
 ```bash
 uv run trans-novel review book.epub

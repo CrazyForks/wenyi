@@ -50,7 +50,7 @@ segment:
 
 # ── 流水线开关（质量/成本平衡）───────────────────────────────────────────
 pipeline:
-  review: true # 全书翻译完成后自动执行最终审校（漏译/误译/术语/人称）
+  review: false # 默认关闭；开启后在全书翻译完成后自动执行最终审校
   autofix_severe: false # 最终审校后自动重译严重项（漏译/误译）；关掉仅上报
   align_retry_limit: 2
   polish: true # 润色（强档）：等于用 pro 把全书再翻一遍，最烧钱；默认开
@@ -112,7 +112,7 @@ class SegmentConfig(BaseModel):
 
 
 class PipelineConfig(BaseModel):
-    review: bool = True
+    review: bool = False
     autofix_severe: bool = False     # 最终审校后自动重译严重项；关闭则仅上报留人工
     align_retry_limit: int = 2       # 批次翻译段数不符时的整批重试次数，超限后逐段兜底
     polish: bool = True              # 默认开：润色=用强档把全书再翻一遍，可在配置中关闭以节省成本

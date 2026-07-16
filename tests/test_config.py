@@ -37,6 +37,7 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertFalse(cfg.output.bilingual)
             self.assertEqual(cfg.output.bilingual_order, "target_first")
             self.assertTrue(cfg.output.about_page)
+            self.assertFalse(cfg.pipeline.review)
             self.assertFalse(cfg.pipeline.autofix_severe)
             self.assertTrue(cfg.pipeline.polish)
             self.assertEqual(cfg.pipeline.backtranslate_sample, 0.0)

@@ -23,9 +23,9 @@ uv run trans-novel resume book.epub
 uv run trans-novel status book.epub
 ```
 
-With `pipeline.review: true` (the default), the one-command workflow runs a
-final review only after the complete book has been translated and the glossary
-has reached its final state. You can also run or repeat that stage independently:
+Final review is disabled by default. Set `pipeline.review: true` to run it
+automatically after the complete book has been translated and the glossary has
+reached its final state, or run and repeat the stage independently:
 
 ```bash
 uv run trans-novel review book.epub

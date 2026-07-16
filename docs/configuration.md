@@ -141,7 +141,7 @@ Local Ollama and vLLM endpoints are available through the `ollama` and `vllm` pr
 
 ```yaml
 pipeline:
-  review: true
+  review: false
   autofix_severe: false
   polish: true
   backtranslate_sample: 0
@@ -153,7 +153,7 @@ pipeline:
   glossary_scope: chapter
 ```
 
-- `review`: automatically run the independent final-review stage after the complete book has been translated. The explicit `trans-novel review` command is still available when this is disabled.
+- `review`: disabled by default; when enabled, automatically run the independent final-review stage after the complete book has been translated. The explicit `trans-novel review` command remains available while this is disabled.
 - `autofix_severe`: during final review, retranslate severe omissions and mistranslations and adopt fixes that pass validation.
 - `polish`: run the strong model over translated batches again for style. This may improve quality but significantly increases runtime and cost.
 - `backtranslate_sample`: fraction of translated segments to inspect through backtranslation; `0` disables it.
