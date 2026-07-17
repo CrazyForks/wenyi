@@ -50,6 +50,7 @@ setx DEEPSEEK_API_KEY "sk-..."
 uv run trans-novel translate book.epub
 uv run trans-novel translate book.epub --chapter 3
 uv run trans-novel translate book.epub --format txt
+uv run trans-novel translate book.epub --prepare  # 仅准备和预扫，不翻译
 uv run trans-novel translate book.pdf
 
 # 覆盖配置中的润色与审校开关
@@ -60,6 +61,8 @@ uv run trans-novel translate book.epub --no-polish --no-qa
 uv run trans-novel translate book.epub --bilingual
 uv run trans-novel translate book.epub --no-mono --bilingual
 ```
+
+`--prepare` 会解析书籍、识别语言、生成风格指南和初始术语表，并完成配置中启用的全书预扫，但不翻译任何正文。之后不带 `--prepare` 再次运行同一命令，即可复用状态继续翻译。
 
 ## 中断与续跑
 

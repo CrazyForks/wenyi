@@ -257,6 +257,40 @@ class TestBookUnderstanding(unittest.TestCase):
             self.assertIn("全书概览", user)   # fake 概览正文
             self.assertIn("本章梗概", user)   # fake 逐章梗概正文
 
+    def test_prepare_for_translation_builds_understanding_without_targets(self):
+        """准备模式落盘分析、初始术语和全书概览，但不翻译正文。"""
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = _config(os.path.join(d, "state"))
+            client = FakeClient(handler=routing_handler)
+
+            store = Orchestrator(
+                cfg,
+                client=client,
+            ).prepare_for_translation(txt)
+
+            manifest = store.load_manifest()
+            self.assertTrue(store.load_analysis())
+            self.assertTrue((store.load_analysis() or {}).get("book_synopsis"))
+            glossary = GlossaryStore(store.glossary_path)
+            try:
+                self.assertGreater(glossary.stats()["terms"], 0)
+            finally:
+                glossary.close()
+            for item in manifest["chapters"]:
+                chapter = store.load_chapter(item["index"])
+                self.assertTrue(chapter.meta.get("source_digest"))
+                self.assertTrue(
+                    all(segment.target is None for segment in chapter.segments)
+                )
+            translate_calls = [
+                call
+                for call in client.calls
+                if "文学翻译" in call["messages"][0]["content"]
+            ]
+            self.assertEqual(translate_calls, [])
+
     def test_prescan_parallel(self):
         """并行预扫：多线程 digest 后各章梗概按章序落盘，翻译注入正常。"""
         with tempfile.TemporaryDirectory() as d:

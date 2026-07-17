@@ -50,6 +50,7 @@ You may also set `language.source` to a known ISO language code to avoid an addi
 uv run trans-novel translate book.epub
 uv run trans-novel translate book.epub --chapter 3
 uv run trans-novel translate book.epub --format txt
+uv run trans-novel translate book.epub --prepare  # prepare and prescan only; do not translate
 uv run trans-novel translate book.pdf
 
 # Override polishing and whole-book QA settings
@@ -60,6 +61,8 @@ uv run trans-novel translate book.epub --no-polish --no-qa
 uv run trans-novel translate book.epub --bilingual
 uv run trans-novel translate book.epub --no-mono --bilingual
 ```
+
+`--prepare` parses the book, detects its language, generates the style guide and initial glossary, and completes the configured whole-book prescan without translating any body text. Run the same command again without `--prepare` to continue from the saved state.
 
 ## Interrupting and resuming
 

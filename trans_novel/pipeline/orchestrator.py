@@ -358,6 +358,34 @@ class Orchestrator:
         with store.lock():
             return self._run_locked(store, only_chapter=only_chapter, progress=progress)
 
+    def prepare_for_translation(
+        self,
+        input_path: str,
+        *,
+        progress: Optional[ProgressFn] = None,
+    ) -> RunStore:
+        """完成全部译前准备并停止，不翻译正文。
+
+        包括文档解析、语言识别、风格/初始术语分析，以及配置开启时的
+        逐章预扫和全书概览。所有阶段均可续跑，再次调用会复用已落盘结果。
+        """
+        store = self.prepare(input_path, progress=progress)
+        with store.lock():
+            manifest = store.load_manifest()
+            self._apply_language(
+                manifest.get("source_lang") or self.config.source_lang
+            )
+            try:
+                self._build_understanding(store, progress=progress)
+                store.log_event(
+                    "translation_prepared",
+                    input_path=input_path,
+                    book_understanding=self.config.pipeline.book_understanding,
+                )
+            finally:
+                self._flush_usage(store, scope="prepare")
+        return store
+
     def _run_locked(
         self,
         store: RunStore,
