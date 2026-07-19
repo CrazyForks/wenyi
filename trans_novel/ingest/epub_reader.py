@@ -491,7 +491,15 @@ def _logical_chapters(
             canonical_toc_path = toc_path
             boundaries = candidates
             break
-    boundaries.sort(key=lambda item: int(item["boundary_position"]))
+
+    def boundary_position(entry: dict[str, object]) -> int:
+        """返回已由切章策略验证过的整数边界位置。"""
+        value = entry.get("boundary_position")
+        if not isinstance(value, int):
+            raise ValueError("EPUB chapter boundary is missing an integer position")
+        return value
+
+    boundaries.sort(key=boundary_position)
 
     if not boundaries:
         chapters: list[Chapter] = []
@@ -508,20 +516,20 @@ def _logical_chapters(
                     title=str(resource.get("title") or ""),
                     segments=segments,
                     href=str(resource.get("href") or "") or None,
-                    template=str(resource.get("template") or "") or None,
+                    template=None,
                     meta={"epub_split_strategy": "spine-fallback"},
                 )
             )
         return chapters, "spine-fallback", canonical_toc_path
 
     slices: list[tuple[int, int, dict[str, object] | None]] = []
-    first_position = int(boundaries[0]["boundary_position"])
+    first_position = boundary_position(boundaries[0])
     if first_position > 0:
         slices.append((0, first_position, None))
     for index, boundary in enumerate(boundaries):
-        start = int(boundary["boundary_position"])
+        start = boundary_position(boundary)
         end = (
-            int(boundaries[index + 1]["boundary_position"])
+            boundary_position(boundaries[index + 1])
             if index + 1 < len(boundaries)
             else len(all_segments)
         )
@@ -592,6 +600,12 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
         chapters, split_strategy, split_toc_path = _logical_chapters(
             resources, toc_entries
         )
+        # XHTML 模板和内联布局都可从原始 EPUB 确定性重建，不写入运行状态。
+        # Segment.meta 中其它格式或后续阶段添加的信息仍原样保留。
+        for chapter in chapters:
+            chapter.template = None
+            for segment in chapter.segments:
+                segment.meta.pop(_INLINE_META_KEY, None)
 
     return Document(
         title=book_title or os.path.splitext(os.path.basename(path))[0],
@@ -601,7 +615,7 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
         source_path=os.path.abspath(path),
         chapters=chapters,
         meta={
-            "epub_schema": 2,
+            "epub_schema": 3,
             "opf_path": opf_path,
             "toc_paths": toc_paths,
             "toc_entries": toc_entries,

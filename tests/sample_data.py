@@ -276,7 +276,7 @@ _INLINE_CH1 = """<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml"><head><title>Chapitre I</title></head>
 <body>
 <h1>Chapitre I</h1>
-<p class="Textbody"><img src="image.jpg"/>Je suis là, sous le pommier.</p>
+<p class="Textbody"><img src="image.jpg"/><span id="kobo.1.1">Je suis là, sous le pommier.</span></p>
 </body></html>
 """
 

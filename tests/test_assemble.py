@@ -290,7 +290,7 @@ class TestAssembleEpub(unittest.TestCase):
         self.assertIn('encoding="utf-8"', decoded)
         self.assertIn('lang="zh-Hans"', decoded)
 
-    def test_epub_export_restores_inline_image_from_persisted_meta(self):
+    def test_epub_export_rebuilds_inline_layout_without_persisted_meta(self):
         with tempfile.TemporaryDirectory() as d:
             epub = os.path.join(d, "inline.epub")
             write_inline_sample_epub(epub)
@@ -298,7 +298,7 @@ class TestAssembleEpub(unittest.TestCase):
 
             persisted = store.load_chapter(0)
             inline_segments = [s for s in persisted.segments if "epub_inline" in s.meta]
-            self.assertEqual(len(inline_segments), 1)
+            self.assertEqual(inline_segments, [])
 
             output = assemble(store, epub, out_format="epub", about_page=False)
             with zipfile.ZipFile(output) as archive:
@@ -316,7 +316,25 @@ class TestAssembleEpub(unittest.TestCase):
         assert isinstance(image, Tag)
         self.assertEqual(image.get("src"), "image.jpg")
         self.assertEqual(image_data, b"inline-image")
+        self.assertIsNotNone(rendered.find(id="kobo.1.1"))
         self.assertIsNone(rendered.select_one("[data-tn-inline-id]"))
+
+    def test_epub_export_rejects_source_state_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            epub = os.path.join(directory, "inline.epub")
+            write_inline_sample_epub(epub)
+            store, _ = _run(epub, os.path.join(directory, "state"))
+            chapter = store.load_chapter(0)
+            chapter.segments[0].source += " changed"
+            store.save_chapter(chapter)
+
+            with self.assertRaisesRegex(ValueError, "内容已变化"):
+                assemble(
+                    store,
+                    epub,
+                    out_format="epub",
+                    about_page=False,
+                )
 
     def test_epub_render_restores_inline_images_and_breaks(self):
         html = """<html><body>

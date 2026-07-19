@@ -682,15 +682,12 @@ class TestEpubIngest(unittest.TestCase):
         ch1 = doc.chapters[0]
         self.assertEqual(ch1.title, "第一章　出会い")
         self.assertEqual(len(ch1.text_segments), 3)  # h1 + 2 p
-        # 每个 segment 都有回填锚点，且模板里含该锚点
-        template = ch1.template
-        self.assertIsNotNone(template)
-        assert template is not None
+        # 状态只保留稳定定位信息；模板和内联布局在导出时从原 EPUB 重建。
+        self.assertIsNone(ch1.template)
         for s in ch1.text_segments:
-            anchor = s.anchor
-            self.assertIsNotNone(anchor)
-            assert anchor is not None
-            self.assertIn(anchor, template)
+            self.assertIsNotNone(s.anchor)
+            self.assertIsNotNone(s.resource_href)
+            self.assertNotIn("epub_inline", s.meta)
         self.assertIsNotNone(ch1.href)
 
     def test_epub_ignores_internal_file_title_when_no_heading(self):

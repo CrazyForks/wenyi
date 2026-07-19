@@ -268,6 +268,7 @@ def _render_segments_html(
     template: str,
     segments: list[Segment],
     *,
+    render_meta_by_anchor: dict[str, dict[str, object]] | None = None,
     bilingual: bool = False,
     order: str = "target_first",
     preserve_source_style: bool = False,
@@ -286,7 +287,7 @@ def _render_segments_html(
     by_anchor: dict[str, str] = {}
     src_by_anchor: dict[str, str] = {}
     kind_by_anchor: dict[str, str] = {}
-    meta_by_anchor: dict[str, dict[str, object]] = {}
+    stored_meta_by_anchor: dict[str, dict[str, object]] = {}
     cur_anchor: str | None = None
     for s in segments:
         if s.cont and cur_anchor is not None:
@@ -297,12 +298,17 @@ def _render_segments_html(
             by_anchor[cur_anchor] = _seg_text(s)
             src_by_anchor[cur_anchor] = s.source
             kind_by_anchor[cur_anchor] = s.kind
-            meta_by_anchor[cur_anchor] = s.meta
+            stored_meta_by_anchor[cur_anchor] = s.meta
     for anchor, text in by_anchor.items():
         el = soup.find(True, attrs={"data-tn-id": anchor})
         if el is None:
             continue
-        _replace_block_content(el, text, meta_by_anchor.get(anchor, {}))
+        render_meta = (
+            render_meta_by_anchor.get(anchor, {})
+            if render_meta_by_anchor is not None
+            else stored_meta_by_anchor.get(anchor, {})
+        )
+        _replace_block_content(el, text, render_meta)
         del el["data-tn-id"]
         if not bilingual or kind_by_anchor.get(anchor) == KIND_HEADING:
             continue
@@ -744,9 +750,40 @@ def _render_epub_resources(
             raise ValueError(
                 f"EPUB 正文与翻译状态不匹配：{href} 缺少回填锚点 {preview}"
             )
+
+        fresh_by_anchor = {
+            segment.anchor: segment
+            for segment in annotated_segments
+            if segment.anchor
+        }
+        stored_sources: dict[str, str] = {}
+        current_anchor: str | None = None
+        for segment in segments:
+            if segment.cont and current_anchor is not None:
+                stored_sources[current_anchor] += segment.source
+            elif segment.anchor:
+                current_anchor = segment.anchor
+                stored_sources[current_anchor] = segment.source
+            else:
+                current_anchor = None
+        changed_anchors = [
+            anchor
+            for anchor, source in stored_sources.items()
+            if fresh_by_anchor[anchor].source != source
+        ]
+        if changed_anchors:
+            preview = ", ".join(changed_anchors[:3])
+            raise ValueError(
+                f"EPUB 原文与翻译状态不匹配：{href} 内容已变化（{preview}）"
+            )
+        fresh_meta_by_anchor = {
+            anchor: segment.meta
+            for anchor, segment in fresh_by_anchor.items()
+        }
         rendered[href] = _render_segments_html(
             template,
             segments,
+            render_meta_by_anchor=fresh_meta_by_anchor,
             bilingual=bilingual,
             order=order,
             preserve_source_style=preserve_source_style,
